@@ -66,9 +66,9 @@ missing.
 git clone https://github.com/quangminh1212/droidlab.git
 cd droidlab
 
-# 1. Verify every conformance vector is internally consistent (fast)
-npm ci
-npm run test:protocol
+# 1. Verify the registries, the conformance vectors and this documentation.
+#    `npm run check` needs no third-party packages; it runs on a bare Node.js.
+npm run check
 
 # 2. Android agent
 cd android
@@ -182,7 +182,7 @@ Practical loop:
 ```powershell
 git add android/core-protocol/src/main/kotlin/io/droidlab/protocol/FrameCodec.kt
 git add android/core-protocol/src/test/kotlin/io/droidlab/protocol/FrameCodecTest.kt
-npm run test:protocol
+npm run check
 git commit -m "feat(protocol): implement DLWP/1 frame encoding" -m "Encodes the 24-byte header and a cbOR body, and pins the layout against protocol/vectors/framing-basic.json so the Kotlin and C# codecs cannot drift."
 ```
 

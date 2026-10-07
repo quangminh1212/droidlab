@@ -14,8 +14,9 @@
     "release": "standard-version",
     "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#**/build/**\"",
     "check:registry": "node protocol/tools/registry-check.mjs",
+    "check:readme": "node protocol/tools/check-readme.cjs",
     "test:protocol": "node protocol/tools/test-vectors/verify.mjs",
-    "check": "npm run check:registry && npm run test:protocol"
+    "check": "npm run check:registry && npm run test:protocol && npm run check:readme"
   },
   "config": {
     "commitizen": {

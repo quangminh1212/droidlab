@@ -1,0 +1,44 @@
+docs: add the project README and a checker that keeps it honest
+
+Adds README.md: what DroidLab is, why it exists, the architecture, both pairing
+ceremonies, the DLWP/1 protocol, the shell safety model, build and install
+instructions, the conformance-verification story, the repository layout, the
+milestone roadmap, and the security posture.
+
+Two things the README states deliberately, because they are the easiest parts of
+this project to get wrong:
+
+  * The two-pairing model. DLWP/1 pairing (QR code, protects the DroidLab
+    session) and Android wireless debugging (6-digit code, protects the ADB
+    transport) are separate ceremonies with separate secrets, and neither grants
+    the other. ADR-0006 requires this to be documented, and the README says it
+    twice: once in the architecture section and once in the walkthrough.
+
+  * The actual status. The specification, registries and conformance vectors are
+    complete and verified; the android/ and windows/ trees are not written yet.
+    The README says so at the top and in the roadmap rather than implying a
+    working product.
+
+Adds protocol/tools/check-readme.cjs, which verifies a README cannot rot
+silently: every repository-relative link resolves, every anchor matches a
+heading, every quoted conformance number matches what the verifier prints, and
+the registry counts quoted in prose match protocol/registry/dlwp-1.json. It
+reports 41 checks, all passing.
+
+Adds .markdownlint-cli2.jsonc so `npm run lint:md` — which was declared in
+package.json but had no configuration, and therefore never passed — has a
+defined house style. Rules are relaxed only where these documents genuinely need
+it: specification tables and fenced blocks may exceed 80 columns, and <string>
+and <map> are permitted in RFC-0001 because they are IDL type names in a type
+table, not HTML elements.
+
+Wires check:readme into `npm run check`, and updates CONTRIBUTING.md so the
+documented command matches the one that exists.
+
+Verification: `npm run check` is green end to end — registries agree in both
+directions, 64/64 conformance checks pass, 41/41 README checks pass. README.md
+reports zero markdownlint issues.
+
+Note: `npm ci` currently installs nothing in this environment, so the lint step
+is not part of `npm run check`. All three checkers are dependency-free by
+design, so `npm run check` is the reliable gate.
