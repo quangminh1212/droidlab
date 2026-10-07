@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>DroidLab.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DroidLab.Protocol\DroidLab.Protocol.csproj" />
+  </ItemGroup>
+
+  <!--
+    The conformance vectors are the interoperability contract (ADR-0007), and
+    they live in protocol/vectors/ so that both codecs load the same files. They
+    are linked into the output directory rather than copied into the test tree,
+    so there is exactly one copy of each vector in the repository and a test can
+    never pass against a stale duplicate.
+  -->
+  <ItemGroup>
+    <None Include="..\..\protocol\vectors\*.json"
+          Link="vectors\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\protocol\registry\dlwp-1.json"
+          Link="registry\dlwp-1.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

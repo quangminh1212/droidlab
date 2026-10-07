@@ -1,0 +1,11 @@
+# .NET build output
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# Test and coverage output
+TestResults/
+[Cc]overage*/
+*.coverage
+*.coveragexml

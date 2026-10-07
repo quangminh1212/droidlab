@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    DroidLab.Protocol — the DLWP/1 codec (RFC-0001, RFC-0002).
+
+    Layer L1 in docs/architecture/REPOSITORY.md. This project may depend on L0
+    (the platform and the BCL) and on nothing else. In particular it must not
+    reference DroidLab.Core, DroidLab.Adb or DroidLab.App, and it must not
+    reference its Kotlin sibling android/core-protocol. The two codecs are kept
+    equivalent by the shared vector set in protocol/vectors/, not by shared code.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <RootNamespace>DroidLab.Protocol</RootNamespace>
+    <AssemblyName>DroidLab.Protocol</AssemblyName>
+    <!-- The protocol is specification code: it must be deterministic and
+         allocation-predictable, so it is compiled with invariant culture in mind
+         and without any dynamic code generation. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsTrimmable>true</IsTrimmable>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Description>DLWP/1 wire protocol codec for the DroidLab Windows controller.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/quangminh1212/droidlab.git</RepositoryUrl>
+  </PropertyGroup>
+
+</Project>
