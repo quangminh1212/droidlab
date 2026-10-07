@@ -1,0 +1,128 @@
+# Files
+*.class
+*.log
+*.ctxt
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# Android / Gradle
+.gradle/
+build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+release/
+*.apk
+*.aab
+*.ap_
+*.dex
+output-metadata.json
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Keystores (NEVER commit signing material)
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# .NET / Visual Studio
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+artifacts/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.nupkg
+*.snupkg
+.vs/
+TestResults/
+[Cc]overage*/
+*.coverage
+*.coveragexml
+project.lock.json
+project.fragment.lock.json
+launchSettings.json
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+
+# Rust (used by the CLI tester / future desktop agent)
+target/
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Secrets & local runtime state
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
+*.cer
+*.crt
+*.key
+secrets/
+*.secret
+config.local.*
+
+# DroidLab runtime artifacts
+.droidlab/
+*.droidlab-log
+logs/
+screenshots/output/
+videos/output/
+
+# Tooling caches
+.eslintcache
+.stylecop/
+.cache/
+tmp/
+temp/
