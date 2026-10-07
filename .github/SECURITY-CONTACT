@@ -1,0 +1,15 @@
+# Security contact
+
+Private security reports are handled through the process in
+[SECURITY.md](../SECURITY.md).
+
+**Preferred channel:** GitHub private vulnerability reporting on this repository
+(*Security* tab → *Report a vulnerability*). This keeps the report, the
+discussion and the fix private until an advisory is published.
+
+If that channel is unavailable to you, open a public issue whose title is
+`security report - please contact me` and whose body contains **no technical
+detail**. A maintainer will open a private thread.
+
+Do not send credentials, device dumps or personal data through any public
+channel.
