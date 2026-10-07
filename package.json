@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/package.json",
+  "name": "droidlab-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DroidLab - wireless Android test environment controlled from Windows",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/quangminh1212/droidlab.git"
+  },
+  "scripts": {
+    "commit": "cz",
+    "release": "standard-version",
+    "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#**/build/**\"",
+    "test:protocol": "node protocol/tools/test-vectors/verify.mjs"
+  },
+  "config": {
+    "commitizen": {
+      "path": "cz-conventional-changelog"
+    }
+  },
+  "devDependencies": {
+    "commitizen": "^4.3.1",
+    "cz-conventional-changelog": "^3.3.0",
+    "markdownlint-cli2": "^0.14.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
