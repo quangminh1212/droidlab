@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/video.schema.json",
+  "title": "DLWP/1 video payloads",
+  "description": "Bodies of the video frames defined in RFC-0001 section 8.1. Video travels on a channel whose CHANNEL_OPEN purpose is 'video'. Binary payloads are encoded as base64 in the JSON vectors and as cbOR byte strings on the wire.",
+  "$defs": {
+    "VideoStart": {
+      "title": "VIDEO_START (0x30)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "codec": { "type": "string", "enum": ["avc", "hevc"], "default": "avc" },
+        "max_width": { "type": "integer", "minimum": 16, "maximum": 4096, "default": 1280 },
+        "max_height": { "type": "integer", "minimum": 16, "maximum": 4096, "default": 720 },
+        "fps": { "type": "integer", "minimum": 1, "maximum": 120, "default": 30 },
+        "bitrate": { "type": "integer", "minimum": 64000, "default": 4000000 },
+        "keyframe_interval_s": { "type": "integer", "minimum": 1, "maximum": 60, "default": 2 },
+        "include_frames": { "type": "boolean", "default": true },
+        "orientation": { "type": "string", "enum": ["auto", "portrait", "landscape"], "default": "auto" }
+      }
+    },
+    "VideoConfig": {
+      "title": "VIDEO_CONFIG (0x31)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["codec", "width", "height", "csd"],
+      "properties": {
+        "codec": { "type": "string", "enum": ["avc", "hevc"] },
+        "width": { "type": "integer", "minimum": 16 },
+        "height": { "type": "integer", "minimum": 16 },
+        "csd": {
+          "description": "Codec-specific configuration in annex-B form: for H.264, the SPS followed by the PPS, each with its start code.",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "screen_width": { "type": "integer", "minimum": 1 },
+        "screen_height": { "type": "integer", "minimum": 1 },
+        "rotation": { "type": "integer", "enum": [0, 90, 180, 270] }
+      }
+    },
+    "VideoFrame": {
+      "title": "VIDEO_FRAME (0x32)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pts_us", "flags", "data"],
+      "properties": {
+        "pts_us": { "description": "Presentation timestamp in microseconds.", "type": "integer", "minimum": 0 },
+        "flags": {
+          "description": "Bit 0 KEYFRAME, bit 1 CONFIG, bit 2 END_OF_STREAM.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "data": {
+          "description": "One access unit. No length prefix of its own; the frame body length delimits it.",
+          "type": "string",
+          "contentEncoding": "base64"
+        },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "VideoStop": {
+      "title": "VIDEO_STOP (0x33)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string", "maxLength": 64 },
+        "sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "VideoStats": {
+      "title": "VIDEO_STATS (0x34)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pts_us": { "type": "integer", "minimum": 0 },
+        "frames_sent": { "type": "integer", "minimum": 0 },
+        "frames_dropped": { "type": "integer", "minimum": 0 },
+        "bytes_sent": { "type": "integer", "minimum": 0 },
+        "encoder_ms_avg": { "type": "integer", "minimum": 0 },
+        "queue_depth": { "type": "integer", "minimum": 0 },
+        "bitrate_actual": { "type": "integer", "minimum": 0 },
+        "final": { "type": "boolean", "default": false }
+      }
+    }
+  }
+}

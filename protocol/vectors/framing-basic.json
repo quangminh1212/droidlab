@@ -1,0 +1,253 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "Byte-exact frame encodings. An implementation must encode each 'decoded' message into exactly the bytes in 'frame', and decode 'frame' back into the same logical message. Body payloads here are cleartext (no ENCRYPTED flag) so that the framing vectors stay independent of the key schedule; the encrypted forms are pinned by crypto-session-keys.json.",
+  "vectors": [
+    {
+      "id": "framing.ping.empty-body",
+      "note": "PING carries no parameters, so the body is the zero-length byte string and body_length is 0.",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 0,
+          "header_length": 24,
+          "message_type": 5,
+          "channel_id": 0,
+          "sequence_number": 1,
+          "acknowledgment": 0,
+          "body_length": 0
+        },
+        "body": {}
+      },
+      "frame": "444c57500100180500000000000000010000000000000000",
+      "body_hex": ""
+    },
+    {
+      "id": "framing.pong-with-urgent-and-ack",
+      "note": "PONG echoes the probe's sequence number in the acknowledgment field and sets the URGENT flag (0x02).",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 2,
+          "header_length": 24,
+          "message_type": 6,
+          "channel_id": 0,
+          "sequence_number": 2,
+          "acknowledgment": 1,
+          "body_length": 0
+        },
+        "body": {}
+      },
+      "frame": "444c57500102180600000000000000020000000100000000",
+      "body_hex": ""
+    },
+    {
+      "id": "framing.hello.canonical",
+      "note": "HELLO before any encryption. Pins the map-key emission order for the handshake body, so both codecs produce identical bytes.",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 0,
+          "header_length": 24,
+          "message_type": 1,
+          "channel_id": 0,
+          "sequence_number": 1,
+          "acknowledgment": 0,
+          "body_length": 247
+        },
+        "body": {
+          "proto": "1.0",
+          "versions_supported": [
+            "1.0"
+          ],
+          "client_id": "11111111-2222-4333-8444-555555555555",
+          "client_name": "test-controller",
+          "client_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+          "client_pub": "f3b1b3d6a1e0f1b1a1b3d6a1e0f1b1a1b3d6a1e0f1b1a1b3d6a1e0f1b1a1b3d6",
+          "pairing_id": "AAECAwQFBgcICQoLDA0ODw",
+          "capabilities_offered": [
+            "screen.mirror",
+            "input.touch",
+            "input.key"
+          ],
+          "platform": "windows"
+        }
+      },
+      "frame": "444c575001001801000000000000000100000000000000f7f7000b61312e30f10161312e30782d31313131313131312d323232322d343333332d383434342d353535353535353535353535703d746573742d636f6e74726f6c6c6572582041414543417751464267634943516f4c4441304f4478415245684d554652595847426b61477877644868386633366231623364366131653066316231613162336436613165306631623161316233643661316530663162316131623364366131653066316231613162336436a4046f41414543417751464267634943516f4c4441304f44778473637265656e2e6d6972726f726b696e7075742e746f75636869696e7075742e6b65796877696e646f7773",
+      "body_hex": "f7000b61312e30f10161312e30782d31313131313131312d323232322d343333332d383434342d353535353535353535353535703d746573742d636f6e74726f6c6c6572582041414543417751464267634943516f4c4441304f4478415245684d554652595847426b61477877644868386633366231623364366131653066316231613162336436613165306631623161316233643661316530663162316131623364366131653066316231613162336436a4046f41414543417751464267634943516f4c4441304f44778473637265656e2e6d6972726f726b696e7075742e746f75636869696e7075742e6b65796877696e646f7773"
+    },
+    {
+      "id": "framing.input-touch.normalised",
+      "note": "Normalised coordinates (ten-thousandths) with two pointers. This is the shape the controller emits for every pointer move, so its size is the hot path: 46-byte header plus an 81-byte body.",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 1,
+          "header_length": 24,
+          "message_type": 64,
+          "channel_id": 3,
+          "sequence_number": 412,
+          "acknowledgment": 409,
+          "body_length": 81
+        },
+        "body": {
+          "action": "move",
+          "gesture_id": 7,
+          "pointers": [
+            {
+              "id": 0,
+              "x": 1234,
+              "y": 5678
+            },
+            {
+              "id": 1,
+              "x": 2234,
+              "y": 6678
+            }
+          ],
+          "screen_width": 1080,
+          "screen_height": 2400
+        }
+      },
+      "frame": "444c575001011840000000030000019c0000019900000051747572655f69640768706f696e7465727382a36269640061781904d26179162e66a36269640161781908ba61791673a66c73637265656e5f77696474681904386d73637265656e5f686569676874190960",
+      "body_hex": "747572655f69640768706f696e7465727382a36269640061781904d26179162e66a36269640161781908ba61791673a66c73637265656e5f77696474681904386d73637265656e5f686569676874190960"
+    },
+    {
+      "id": "framing.end-of-stream.channel-close",
+      "note": "END_OF_STREAM (0x04) marks the last frame on a channel. The receiver must treat the channel as closed after processing it.",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 5,
+          "header_length": 24,
+          "message_type": 34,
+          "channel_id": 3,
+          "sequence_number": 913,
+          "acknowledgment": 910,
+          "body_length": 18
+        },
+        "body": {
+          "reason": "video stopped"
+        }
+      },
+      "frame": "444c57500105182200000003000003910000038e0000001261736f6e6d766964656f2073746f70706564",
+      "body_hex": "61736f6e6d766964656f2073746f70706564"
+    },
+    {
+      "id": "framing.error.recoverable",
+      "note": "A recoverable error aborts only the affected channel. The request_type and request_seq correlate the failure with the command that caused it.",
+      "decoded": {
+        "header": {
+          "magic": "DLWP",
+          "version": 1,
+          "flags": 1,
+          "header_length": 24,
+          "message_type": 240,
+          "channel_id": 3,
+          "sequence_number": 914,
+          "acknowledgment": 910,
+          "body_length": 70
+        },
+        "body": {
+          "code": "ERR_NOT_ALLOWED",
+          "message": "command is not in the allow list",
+          "severity": "recoverable",
+          "request_type": 80,
+          "request_seq": 905,
+          "details": {
+            "reason": "not_in_allow_list"
+          }
+        }
+      },
+      "frame": "444c5750010118f000000003000003920000038e00000046657261626c656c726571756573745f7479706518506b726571756573745f7365711903896764657461696c73a166726561736f6e726e6f745f696e5f616c6c6f775f6c697374",
+      "body_hex": "657261626c656c726571756573745f7479706518506b726571756573745f7365711903896764657461696c73a166726561736f6e726e6f745f696e5f616c6c6f775f6c697374"
+    }
+  ],
+  "encoding_rules": {
+    "header_magic": "The four bytes 0x44 0x4C 0x57 0x50, i.e. ASCII 'DLWP'. Never encrypted, never omitted.",
+    "header_length": "Always 24 in protocol version 1.0. Reserved for future header extensions; a receiver must reject any other value with ERR_UNSUPPORTED_HEADER.",
+    "integers": "Big-endian, fixed width as specified in RFC-0001 section 3. Not cbOR integers: the frame header is a fixed layout.",
+    "body_cleartext": "When the ENCRYPTED flag is clear, the body is the cbOR encoding of the map, or zero bytes when the message defines no parameters.",
+    "body_encrypted": "When the ENCRYPTED flag is set, the body is nonce(12) || ciphertext || tag(16), where nonce = iv_prefix(4) || sequence(8, big-endian) and the plaintext is the cbOR encoding of the map. See RFC-0002 section 5.2.",
+    "map_key_order": "Keys are emitted in the order listed for each message in RFC-0001. This is not a semantic requirement for parsing, but it is a conformance requirement for encoding, because it makes the byte vectors unique.",
+    "map_encoding": "Definite-length maps and arrays only. Indefinite-length encodings must be rejected with ERR_MALFORMED.",
+    "integer_encoding": "Shortest form: a value that fits one byte is encoded in one byte, and so on. Non-shortest integer encodings must be rejected with ERR_MALFORMED.",
+    "text_strings": "Definite-length UTF-8. A lone surrogate or invalid UTF-8 must be rejected with ERR_MALFORMED.",
+    "byte_strings": "Definite-length. Fixed-width fields are exactly their declared width; a wrong width is ERR_MALFORMED.",
+    "array_encoding": "Definite-length, empty array is 0x80.",
+    "empty_body": "Messages with no parameters use a zero-length body, not an empty map. A receiver must also accept 0xA0 for these messages.",
+    "no_tags": "The protocol uses no cbOR tags. tag 2 (bignum) and tag 3 (negative bignum) must be rejected with ERR_MALFORMED.",
+    "no_floats": "cbOR half, single and double precision must be rejected with ERR_MALFORMED for every protocol body."
+  },
+  "body_layout_example": {
+    "note": "Worked example of framing.error.recoverable, byte by byte, so a reviewer can check the offsets by hand.",
+    "bytes": [
+      {
+        "offset": 0,
+        "length": 4,
+        "hex": "444c5750",
+        "field": "magic"
+      },
+      {
+        "offset": 4,
+        "length": 1,
+        "hex": "01",
+        "field": "version = 1"
+      },
+      {
+        "offset": 5,
+        "length": 1,
+        "hex": "01",
+        "field": "flags = ENCRYPTED"
+      },
+      {
+        "offset": 6,
+        "length": 1,
+        "hex": "18",
+        "field": "header_length = 24"
+      },
+      {
+        "offset": 7,
+        "length": 1,
+        "hex": "f0",
+        "field": "message_type = ERROR (0xF0)"
+      },
+      {
+        "offset": 8,
+        "length": 4,
+        "hex": "00000003",
+        "field": "channel_id = 3"
+      },
+      {
+        "offset": 12,
+        "length": 4,
+        "hex": "00000392",
+        "field": "sequence_number = 914"
+      },
+      {
+        "offset": 16,
+        "length": 4,
+        "hex": "0000038e",
+        "field": "acknowledgment = 910"
+      },
+      {
+        "offset": 20,
+        "length": 4,
+        "hex": "00000046",
+        "field": "body_length = 70"
+      },
+      {
+        "offset": 24,
+        "length": 70,
+        "hex": "a465636f64656d4552525f…",
+        "field": "body: cbOR map, 4 pairs"
+      }
+    ]
+  }
+}

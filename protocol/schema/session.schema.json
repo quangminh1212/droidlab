@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/session.schema.json",
+  "title": "DLWP/1 session and payload frames",
+  "description": "Bodies of the handshake frames (RFC-0001 section 5), the channel frames (section 7.4), the device, clipboard, log, app, shell and file frames (section 8), and SESSION_END (section 6.3).",
+  "$defs": {
+    "Hello": {
+      "title": "HELLO (0x01)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proto", "versions_supported", "client_id", "client_nonce", "client_pub"],
+      "properties": {
+        "proto": { "type": "string" },
+        "versions_supported": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
+        "client_id": { "type": "string", "format": "uuid" },
+        "client_name": { "type": "string", "maxLength": 64, "default": "DroidLab Controller" },
+        "client_nonce": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "client_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "capabilities_offered": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "platform": { "type": "string", "enum": ["windows", "linux", "macos"], "default": "windows" }
+      }
+    },
+    "HelloAck": {
+      "title": "HELLO_ACK (0x02)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proto",
+        "agent_id",
+        "agent_name",
+        "agent_nonce",
+        "agent_pub",
+        "session_id",
+        "transcript_hash",
+        "capabilities"
+      ],
+      "properties": {
+        "proto": { "type": "string" },
+        "agent_id": { "type": "string", "format": "uuid" },
+        "agent_name": { "type": "string", "maxLength": 64 },
+        "agent_nonce": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "agent_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "session_id": { "type": "string", "contentEncoding": "base64url" },
+        "transcript_hash": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "capabilities": { "type": "array", "items": { "type": "string" } },
+        "limits": { "$ref": "capabilities.schema.json#/$defs/Limits" },
+        "server_time_ms": { "type": "integer", "minimum": 0 },
+        "max_frame_bytes": { "type": "integer", "minimum": 1024 }
+      }
+    },
+    "Auth": {
+      "title": "AUTH (0x03)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairing_id", "proof", "client_fingerprint"],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "proof": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "client_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$"
+        }
+      }
+    },
+    "AuthOk": {
+      "title": "AUTH_OK (0x04)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["session_id", "agent_fingerprint", "negotiated"],
+      "properties": {
+        "session_id": { "type": "string", "contentEncoding": "base64url" },
+        "agent_fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$"
+        },
+        "negotiated": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["proto", "capabilities"],
+          "properties": {
+            "proto": { "type": "string" },
+            "capabilities": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "session_timeout_s": { "type": "integer", "minimum": 5, "maximum": 3600, "default": 30 }
+      }
+    },
+    "ChannelOpen": {
+      "title": "CHANNEL_OPEN (0x20)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose"],
+      "properties": {
+        "purpose": { "type": "string", "enum": ["video", "input", "shell", "file", "log", "app"] },
+        "params": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "ChannelOpened": {
+      "title": "CHANNEL_OPENED (0x21)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["purpose", "channel_id"],
+      "properties": {
+        "purpose": { "type": "string", "enum": ["video", "input", "shell", "file", "log", "app"] },
+        "channel_id": { "type": "integer", "minimum": 1 },
+        "params": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "ChannelClose": {
+      "title": "CHANNEL_CLOSE (0x22)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason": { "type": "string", "maxLength": 128 }
+      }
+    },
+    "ShellExec": {
+      "title": "SHELL_EXEC (0x50)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": { "description": "Executable path. Never interpreted by a shell.", "type": "string", "maxLength": 1024 },
+        "args": { "type": "array", "items": { "type": "string", "maxLength": 1024 }, "maxItems": 64, "default": [] },
+        "cwd": { "type": "string", "maxLength": 1024 },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000 },
+        "interactive": { "type": "boolean", "const": false },
+        "pty": { "type": "boolean", "const": false }
+      }
+    },
+    "ShellStdout": {
+      "title": "SHELL_STDOUT (0x51)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stream", "data"],
+      "properties": {
+        "stream": { "type": "string", "enum": ["stdout", "stderr"] },
+        "data": { "type": "string", "contentEncoding": "base64" },
+        "seq": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ShellExit": {
+      "title": "SHELL_EXIT (0x52)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exit_code"],
+      "properties": {
+        "exit_code": { "type": "integer" },
+        "signal": { "type": "string", "maxLength": 32 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean", "default": false }
+      }
+    },
+    "FileList": {
+      "title": "FILE_LIST (0x60)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "maxLength": 4096 },
+        "recursive": { "type": "boolean", "default": false },
+        "max_entries": { "type": "integer", "minimum": 1, "maximum": 10000, "default": 1000 }
+      }
+    },
+    "FileListResult": {
+      "title": "FILE_LIST_RESULT (0x61)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "entries"],
+      "properties": {
+        "path": { "type": "string" },
+        "truncated": { "type": "boolean", "default": false },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "type", "size", "mtime_ms"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "type": "string", "enum": ["file", "dir", "link"] },
+              "size": { "type": "integer", "minimum": 0 },
+              "mtime_ms": { "type": "integer", "minimum": 0 },
+              "mode_digits": { "type": "string", "pattern": "^[0-7]{3,4}$" },
+              "is_link": { "type": "boolean", "default": false }
+            }
+          }
+        }
+      }
+    },
+    "FilePull": {
+      "title": "FILE_PULL (0x62)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "maxLength": 4096 },
+        "offset": { "type": "integer", "minimum": 0, "default": 0 },
+        "length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "FileChunk": {
+      "title": "FILE_CHUNK (0x63)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offset", "data", "eof"],
+      "properties": {
+        "offset": { "type": "integer", "minimum": 0 },
+        "data": { "type": "string", "contentEncoding": "base64" },
+        "eof": { "type": "boolean" }
+      }
+    },
+    "FilePush": {
+      "title": "FILE_PUSH (0x64)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "offset", "data", "eof"],
+      "properties": {
+        "path": { "type": "string", "maxLength": 4096 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "data": { "type": "string", "contentEncoding": "base64" },
+        "eof": { "type": "boolean" },
+        "mode": { "type": "string", "pattern": "^[0-7]{3,4}$" },
+        "mtime_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "FileResult": {
+      "title": "FILE_RESULT (0x65)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "path", "ok"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["list", "pull", "push"] },
+        "path": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "error": { "type": "string", "maxLength": 512 }
+      }
+    },
+    "ClipboardSet": {
+      "title": "CLIPBOARD_SET (0x71)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 262144 },
+        "mime": { "type": "string", "default": "text/plain" }
+      }
+    },
+    "ClipboardData": {
+      "title": "CLIPBOARD_DATA (0x72)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "ts_ms"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 262144 },
+        "mime": { "type": "string", "default": "text/plain" },
+        "ts_ms": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "DeviceInfoResult": {
+      "title": "DEVICE_INFO_RESULT (0x81)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manufacturer", "model", "android_release", "android_sdk"],
+      "properties": {
+        "manufacturer": { "type": "string" },
+        "model": { "type": "string" },
+        "product": { "type": "string" },
+        "device": { "type": "string" },
+        "board": { "type": "string" },
+        "hardware": { "type": "string" },
+        "serial_redacted": {
+          "description": "Stable per-install pseudonym. Never the hardware serial.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{12}$"
+        },
+        "android_release": { "type": "string" },
+        "android_sdk": { "type": "integer", "minimum": 21 },
+        "build_id": { "type": "string" },
+        "build_fingerprint": { "type": "string" },
+        "abi_list": { "type": "array", "items": { "type": "string" } },
+        "locale": { "type": "string" },
+        "timezone": { "type": "string" },
+        "screen_width": { "type": "integer", "minimum": 1 },
+        "screen_height": { "type": "integer", "minimum": 1 },
+        "density_dpi": { "type": "integer", "minimum": 1 },
+        "battery_level": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "battery_charging": { "type": "boolean" },
+        "ram_total_kb": { "type": "integer", "minimum": 0 },
+        "storage_free_kb": { "type": "integer", "minimum": 0 },
+        "is_rooted": { "type": "boolean" },
+        "uptime_ms": { "type": "integer", "minimum": 0 },
+        "adb_wireless_enabled": { "type": "boolean" },
+        "adb_endpoint": { "type": "string" },
+        "adb_pairing_required": { "type": "boolean" }
+      }
+    },
+    "LogSubscribe": {
+      "title": "LOG_SUBSCRIBE (0x82)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "buffers": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["main", "system", "events", "crash", "radio"] },
+          "default": ["main", "system", "crash"]
+        },
+        "filter_spec": { "type": "string", "maxLength": 512 },
+        "min_level": { "type": "string", "enum": ["V", "D", "I", "W", "E", "F"], "default": "V" },
+        "max_lines_per_s": { "type": "integer", "minimum": 1, "maximum": 100000, "default": 5000 }
+      }
+    },
+    "LogEntry": {
+      "title": "LOG_ENTRY (0x83)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ts_ms", "pid", "level", "tag", "message"],
+      "properties": {
+        "ts_ms": { "type": "integer", "minimum": 0 },
+        "pid": { "type": "integer", "minimum": 0 },
+        "tid": { "type": "integer", "minimum": 0 },
+        "level": { "type": "string", "enum": ["V", "D", "I", "W", "E", "F"] },
+        "tag": { "type": "string", "maxLength": 64 },
+        "message": { "type": "string", "maxLength": 8192 }
+      }
+    },
+    "AppInstall": {
+      "title": "APP_INSTALL (0x90)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "maxLength": 4096 },
+        "replace": { "type": "boolean", "default": true },
+        "grant_permissions": { "type": "boolean", "default": false },
+        "downgrade": { "type": "boolean", "const": false },
+        "user_id": { "type": "integer", "minimum": 0, "default": 0 }
+      }
+    },
+    "AppLaunch": {
+      "title": "APP_LAUNCH (0x91)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package"],
+      "properties": {
+        "package": { "type": "string", "maxLength": 255 },
+        "activity": { "type": "string", "maxLength": 255 },
+        "action": { "type": "string", "maxLength": 255 },
+        "data": { "type": "string", "maxLength": 4096 },
+        "extras": { "type": "object", "additionalProperties": { "type": "string" } },
+        "force_stop_first": { "type": "boolean", "default": false }
+      }
+    },
+    "AppResult": {
+      "title": "APP_RESULT (0x92)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "ok"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["install", "launch"] },
+        "ok": { "type": "boolean" },
+        "package_name": { "type": "string" },
+        "version_name": { "type": "string" },
+        "error": { "type": "string", "maxLength": 512 }
+      }
+    },
+    "SessionEnd": {
+      "title": "SESSION_END (0xF1)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "client_shutdown",
+            "agent_shutdown",
+            "idle_timeout",
+            "auth_failed",
+            "protocol_error",
+            "capture_revoked",
+            "revoked",
+            "user_request"
+          ]
+        },
+        "code": { "type": "string" },
+        "message": { "type": "string", "maxLength": 512 }
+      }
+    }
+  }
+}

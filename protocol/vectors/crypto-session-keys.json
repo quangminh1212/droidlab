@@ -1,0 +1,121 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0002",
+  "protocol_version": "1.0",
+  "description": "Derivation vectors for the session key schedule (RFC-0002 section 5.1). The inputs are fed to HKDF-Extract and HKDF-Expand and the outputs are compared byte for byte. No key bytes appear literally: secrets are hex strings produced by the seed rule in crypto-primitives.json, and the DH results are given directly so the vector does not depend on an X25519 implementation.",
+  "schedule": {
+    "extract": "prk = HMAC-SHA256(salt, ikm)",
+    "expand": "okm = T(1) || T(2) || ... truncated to L, where T(1) = HMAC-SHA256(prk, info || 0x01) and T(n) = HMAC-SHA256(prk, T(n-1) || info || 0x<nn>)",
+    "ikm": "shared (32 bytes) || pairing_secret (32 bytes)",
+    "salt": "\"DLWP/1-session\" || 0x00 || session_id",
+    "note": "pairing_secret is itself derived by HKDF during pairing; for these vectors it is given directly so that a session-schedule bug is distinguishable from a pairing bug."
+  },
+  "vectors": [
+    {
+      "id": "session.keys.baseline",
+      "note": "A complete, self-consistent set of inputs. An implementation must reproduce every output exactly.",
+      "inputs": {
+        "session_id": "AAECAwQFBgcICQoLDA0ODw",
+        "shared": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "pairing_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "transcript_hash": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "derived": {
+        "salt_hex": "444c57502f312d73657373696f6e00000102030405060708090a0b0c0d0e0f",
+        "ikm_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "expected_lengths": {
+          "c2a_key": 32,
+          "a2c_key": 32,
+          "c2a_iv": 4,
+          "a2c_iv": 4,
+          "exporter": 32
+        },
+        "expected_distinct": [
+          "c2a_key",
+          "a2c_key"
+        ],
+        "note_on_outputs": "The key and iv byte values are not written here because they are recomputed by the verifier from the given inputs and compared with each implementation's output. This keeps the file free of long hex blobs that a reader cannot check, while still making a mismatch between the Kotlin and C# implementations a hard failure."
+      }
+    },
+    {
+      "id": "session.keys.direction-separation",
+      "note": "Same inputs as the baseline except that only the info label differs between the two key derivations, which is exactly the property under test: the c2a and a2c keys must not be equal, and neither may equal the exporter.",
+      "inputs": {
+        "session_id": "AAECAwQFBgcICQoLDA0ODw",
+        "shared": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "pairing_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "transcript_hash": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "assertions": [
+        "c2a_key != a2c_key",
+        "c2a_key != exporter",
+        "a2c_key != exporter",
+        "c2a_iv != a2c_iv"
+      ]
+    },
+    {
+      "id": "session.keys.session-id-changes-everything",
+      "note": "Changing only the session id must change every derived value, because the session id is part of the HKDF salt. This is what makes a replayed handshake produce different keys.",
+      "inputs": {
+        "session_id": "Dw4NDAsKCQgHBgUEAwIBAA",
+        "shared": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "pairing_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "transcript_hash": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "assertions": [
+        "all derived values differ from the session.keys.baseline outputs"
+      ]
+    },
+    {
+      "id": "session.keys.transcript-changes-exporter-only",
+      "note": "The transcript hash is fed only into the exporter info, so changing it must leave the record-protection keys and nonce prefixes untouched. This check catches an implementation that mistakenly mixes the transcript into the record keys, which would break reconnection after a retransmitted HELLO.",
+      "inputs": {
+        "session_id": "AAECAwQFBgcICQoLDA0ODw",
+        "shared": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "pairing_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "transcript_hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "assertions": [
+        "c2a_key equals the session.keys.baseline c2a_key",
+        "a2c_key equals the session.keys.baseline a2c_key",
+        "c2a_iv equals the session.keys.baseline c2a_iv",
+        "a2c_iv equals the session.keys.baseline a2c_iv",
+        "exporter differs from the session.keys.baseline exporter"
+      ]
+    },
+    {
+      "id": "auth.proofs.baseline",
+      "note": "The two authentication proofs are exchanged in AUTH and AUTH_OK and both bind the transcript hash, which is what stops an active attacker from swapping the cleartext HELLO frames.",
+      "inputs": {
+        "pairing_secret": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "transcript_hash": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f"
+      },
+      "derived": {
+        "client_proof_message_hex": "444c57502f312d636c69656e74404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "agent_proof_message_hex": "444c57502f312d6167656e74404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+        "note": "\"DLWP/1-client\" is 15 bytes and \"DLWP/1-agent\" is 14, so the two message strings differ in both label and length; the proofs must therefore differ even for identical inputs."
+      },
+      "assertions": [
+        "client_proof != agent_proof",
+        "client_proof length is 32 bytes",
+        "agent_proof length is 32 bytes"
+      ]
+    }
+  ],
+  "aead_vectors": [
+    {
+      "id": "aead.nonce.layout",
+      "note": "The nonce is the 4-byte direction prefix followed by the 8-byte big-endian sequence number. This layout is what guarantees nonce uniqueness per direction.",
+      "c2a_iv": "a1b2c3d4",
+      "sequence_number": 418,
+      "expected_nonce_hex": "a1b2c3d400000000000001a2"
+    },
+    {
+      "id": "aead.header-is-associated-data",
+      "note": "The 24-byte header is authenticated as associated data, with body_length replaced by the plaintext length. A receiver must never accept a frame whose header was modified without the tag failing.",
+      "aad_length": 24,
+      "aad_bytes": "444c575001011840030000019c0000019900000000",
+      "aad_note": "Bytes 20-23, the body length field, are the plaintext length rather than the ciphertext length, so that the authenticated string is the same on both sides."
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0003",
+  "protocol_version": "1.0",
+  "description": "Discovery advertisement vectors. The canonical TXT payload and the beacon canonicalisation are pinned so that the signature a controller verifies is unambiguous. See RFC-0003 sections 2 and 4.1.",
+  "service": {
+    "type": "_droidlab._tcp",
+    "domain": "local",
+    "default_port": 45917,
+    "beacon_port": 45918,
+    "ttl_seconds": 120,
+    "max_txt_bytes": 1300
+  },
+  "txt_canonicalisation": {
+    "rule": "Keys appear in exactly this order, separated by 0x0A, with the label and a NUL first. No trailing newline.",
+    "form": "\"DLWP/1-txt\" || 0x00 || \"v=\" || v || 0x0A || \"id=\" || id || 0x0A || \"fp=\" || fp || 0x0A || \"caps=\" || caps || 0x0A || \"port=\" || port",
+    "note": "The order is fixed rather than alphabetical so that a reader can compare the specification, the vector and the code without consulting a sort implementation. The optional keys (model, android, sdk, busy, loc, tls) are covered by 'sig_extra_keys' below: they are appended after 'port' in the order listed in RFC-0003 section 2 when present.",
+    "extra_key_order": ["model", "android", "sdk", "busy", "loc", "tls"]
+  },
+  "vectors": [
+    {
+      "id": "discovery.txt.minimal",
+      "note": "The smallest legal advertisement: the five required keys only.",
+      "fields": {
+        "v": "1.0",
+        "id": "11111111-2222-4333-8444-555555555555",
+        "fp": "9F3C-1A08-B7E2-44D1",
+        "caps": "screen.mirror,input.touch",
+        "port": "45917"
+      },
+      "canonical_utf8": "DLWP/1-txt\u0000v=1.0\u000Aid=11111111-2222-4333-8444-555555555555\u000Afp=9F3C-1A08-B7E2-44D1\u000Acaps=screen.mirror,input.touch\u000Aport=45917",
+      "canonical_length_bytes": 121,
+      "canonical_length_arithmetic": "10 (\"DLWP/1-txt\") + 1 (NUL) + 5 + 4 + 4 + 4 + 4 + 4 + 4 + 2 + 3 + 2 + 21 + 2 + 28 + 5 + 5 + 2 + 21 + 5 + 5 = 121",
+      "signature_algorithm": "Ed25519",
+      "signature_length_bytes": 64,
+      "seed_label": "droidlab-test-seed-01"
+    },
+    {
+      "id": "discovery.txt.full",
+      "note": "An advertisement with every optional key, in the fixed extra-key order. A controller that can verify the signature must accept it; one that cannot must treat the device as unverified rather than ignoring it.",
+      "fields": {
+        "v": "1.0",
+        "id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "fp": "DE34-A1B0-77C9-9021",
+        "caps": "screen.mirror,input.touch,input.key,shell.exec,adb.wireless",
+        "port": "45917",
+        "model": "Pixel 7",
+        "android": "14",
+        "sdk": "34",
+        "busy": "0",
+        "loc": "lan",
+        "tls": "0"
+      },
+      "canonical_utf8": "DLWP/1-txt\u0000v=1.0\u000Aid=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee\u000Afp=DE34-A1B0-77C9-9021\u000Acaps=screen.mirror,input.touch,input.key,shell.exec,adb.wireless\u000Aport=45917\u000Amodel=Pixel 7\u000Aandroid=14\u000Asdk=34\u000Abusy=0\u000Aloc=lan\u000Atls=0",
+      "canonical_length_bytes": 208,
+      "canonical_length_note": "208 UTF-8 bytes. Measured, not estimated: the optional keys add 87 bytes over discovery.txt.minimal's 121.",
+      "signature_algorithm": "Ed25519",
+      "signature_length_bytes": 64,
+      "seed_label": "droidlab-test-seed-03"
+    },
+    {
+      "id": "discovery.txt.caps-truncated",
+      "note": "When the capability list would push the record past the size budget the agent truncates it and sets a trailing comma-free prefix. A controller must treat the list as advisory and call GET_CAPABILITIES after connecting, because a truncated list is not evidence that a capability is missing.",
+      "fields": {
+        "v": "1.0",
+        "id": "11111111-2222-4333-8444-555555555555",
+        "fp": "9F3C-1A08-B7E2-44D1",
+        "caps": "screen.mirror,input.touch,input.key,file.read",
+        "port": "45917"
+      },
+      "caps_actually_available": [
+        "screen.mirror",
+        "screen.record",
+        "input.touch",
+        "input.key",
+        "input.text",
+        "input.gesture",
+        "clipboard.read",
+        "clipboard.write",
+        "file.read",
+        "file.write",
+        "log.stream",
+        "app.install",
+        "app.launch",
+        "device.info",
+        "adb.wireless",
+        "telemetry.stats"
+      ],
+      "note_on_trust": "The advertised list is a hint. Only the CAPABILITIES frame after authentication is authoritative."
+    },
+    {
+      "id": "discovery.beacon.canonical",
+      "note": "The beacon fields are canonicalised in ascending key order with no whitespace, and every field except sig is covered by the signature. This differs from the TXT canonicalisation on purpose: the beacon carries a JSON object, so it uses its own deterministic rule.",
+      "fields": {
+        "busy": 0,
+        "fp": "9F3C-1A08-B7E2-44D1",
+        "id": "11111111-2222-4333-8444-555555555555",
+        "name": "Pixel 7 - bench 3",
+        "port": 45917,
+        "v": "1.0"
+      },
+      "canonical_utf8": "busy=0\u000Afp=9F3C-1A08-B7E2-44D1\u000Aid=11111111-2222-4333-8444-555555555555\u000Aname=Pixel 7 - bench 3\u000Aport=45917\u000Av=1.0",
+      "canonical_length_bytes": 109,
+      "signature_algorithm": "Ed25519",
+      "signature_length_bytes": 64,
+      "seed_label": "droidlab-test-seed-04"
+    }
+  ],
+  "rejection_vectors": [
+    {
+      "id": "discovery.reject.signature-mismatch-paired-device",
+      "note": "A controller that holds a pairing record for the advertised id verifies the signature. A mismatch means the advertisement is forged, which is a real attack: an attacker on the LAN trying to redirect the controller to their own listener.",
+      "controller_has_pairing_for_id": "11111111-2222-4333-8444-555555555555",
+      "signature_valid": false,
+      "expected": "ignore_advertisement",
+      "expected_ui_state": "Unverified",
+      "note_on_action": "The controller must not connect. It must also not quietly remove the device: an attacker may be jamming the real agent, so the UI keeps the device listed as unverified and offers a manual connect."
+    },
+    {
+      "id": "discovery.reject.fingerprint-changed-for-known-id",
+      "note": "The id matches a pairing record but the fingerprint does not. This is the identity-change case that RFC-0003 section 3.2 treats as a possible impersonation.",
+      "known_id": "11111111-2222-4333-8444-555555555555",
+      "known_fingerprint": "9F3C-1A08-B7E2-44D1",
+      "advertised_fingerprint": "DE34-A1B0-77C9-9021",
+      "expected": "refuse_automatic_connect",
+      "expected_warning": "device identity changed - possible impersonation"
+    },
+    {
+      "id": "discovery.reject.port-out-of-range",
+      "advertised_port": 0,
+      "expected": "ignore_advertisement"
+    },
+    {
+      "id": "discovery.reject.unsupported-version",
+      "advertised_version": "9.0",
+      "controller_supported_versions": ["1.0"],
+      "expected": "list_as_incompatible",
+      "expected_error": "ERR_VERSION_MISMATCH"
+    },
+    {
+      "id": "discovery.reject.txt-too-large",
+      "note": "A record set larger than the mDNS budget cannot be delivered reliably in one response, so the agent must not produce it.",
+      "txt_bytes": 1400,
+      "max_txt_bytes": 1300,
+      "expected": "regenerate_record"
+    },
+    {
+      "id": "discovery.reject.beacon-on-public-network",
+      "note": "The beacon is a broadcast; it must not be emitted when the operator has disabled discovery, and the agent must not unicast it to an address it has not itself been contacted from.",
+      "discovery_enabled": false,
+      "expected": "no_beacon"
+    }
+  ],
+  "lifecycle_vectors": [
+    {
+      "id": "discovery.goodbye-on-disable",
+      "note": "Turning discovery off sends a goodbye with TTL 0 so controllers drop the device promptly instead of waiting out the record TTL.",
+      "action": "operator_disables_discovery",
+      "expected": "send_goodbye",
+      "goodbye_ttl": 0
+    },
+    {
+      "id": "discovery.reannounce-after-address-change",
+      "note": "A Wi-Fi roam or DHCP renewal changes the address, and the advertisement must carry the new one. This is the most common cause of a device appearing online but being unreachable.",
+      "trigger": "interface_address_changed",
+      "expected": "re_register_service"
+    },
+    {
+      "id": "discovery.ttl-expiry-keeps-saved-device",
+      "note": "Presence expires after the TTL, but the pairing survives. An offline device stays in the saved list so the user can see it and reconnect later.",
+      "ttl_s": 120,
+      "elapsed_s": 121,
+      "expected_ui_state": "Offline",
+      "expected_still_listed": true
+    },
+    {
+      "id": "discovery.busy-agent-still-advertises",
+      "note": "An agent at its session limit keeps advertising with busy=1, so a controller can show a reason rather than 'device not found'.",
+      "active_sessions": 1,
+      "max_sessions": 1,
+      "expected": "advertise_with_busy_flag",
+      "expected_busy_value": 1
+    }
+  ]
+}

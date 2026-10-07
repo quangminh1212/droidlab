@@ -1,0 +1,88 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "Handshake transcript construction, as specified in RFC-0001 section 5.4 and RFC-0002 section 5.1. The transcript is built from received bytes and hashed with SHA-256; the hash is then bound into the AUTH proofs. 'transcript_bytes' is the exact byte string that is hashed, so an implementation can be checked without a full session.",
+  "transcript_format": {
+    "components": [
+      { "index": 0, "value": "DLWP/1-handshake", "encoding": "ascii literal" },
+      { "index": 1, "value": "0x00", "encoding": "single zero byte separator" },
+      { "index": 2, "value": "client_id", "encoding": "u16 big-endian length prefix, then UTF-8 bytes" },
+      { "index": 3, "value": "0x00", "encoding": "single zero byte separator" },
+      { "index": 4, "value": "agent_id", "encoding": "u16 big-endian length prefix, then UTF-8 bytes" },
+      { "index": 5, "value": "0x00", "encoding": "single zero byte separator" },
+      { "index": 6, "value": "client_nonce", "encoding": "32 raw bytes, no length prefix" },
+      { "index": 7, "value": "agent_nonce", "encoding": "32 raw bytes, no length prefix" },
+      { "index": 8, "value": "client_pub", "encoding": "32 raw bytes, no length prefix" },
+      { "index": 9, "value": "agent_pub", "encoding": "32 raw bytes, no length prefix" }
+    ],
+    "hash": "SHA-256",
+    "fixed_width_bytes": { "label": 16, "separator": 1, "length_prefix": 2, "nonce": 32, "public_key": 32 },
+    "note": "The two identifiers are length-prefixed so that a client_id ending in a byte sequence that looks like a separator cannot be confused with a different pair of identifiers. The four fixed-width 32-byte fields need no prefix. An implementation that mis-sizes any component here produces a transcript that agrees with itself and with no peer, which is why the arithmetic is recorded per vector and recomputed by the verifier.",
+    "total_bytes_formula": "16 + 1 + (2 + len(client_id)) + 1 + (2 + len(agent_id)) + 1 + 128"
+  },
+  "vectors": [
+    {
+      "id": "transcript.synthetic.basic",
+      "note": "Synthetic values chosen so a reader can verify the layout by hand: the nonces are 0x00-0x1f and 0x20-0x3f, the public keys are 0x40-0x5f and 0x60-0x7f.",
+      "inputs": {
+        "client_id": "11111111-2222-4333-8444-555555555555",
+        "agent_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "client_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "agent_nonce": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "client_pub": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "agent_pub": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+      },
+      "expected": {
+        "client_id_length_prefix": "0024",
+        "agent_id_length_prefix": "0024",
+        "transcript_length_bytes": 223,
+        "transcript_arithmetic": "16 (\"DLWP/1-handshake\") + 1 (separator) + 2 + 36 (client_id) + 1 (separator) + 2 + 36 (agent_id) + 1 (separator) + 32 + 32 + 32 + 32 (four fixed-width fields) = 223",
+        "transcript_bytes": "444c57502f312d68616e647368616b6500002431313131313131312d323232322d343333332d383434342d35353535353535353535353500002461616161616161612d626262622d346363632d386464642d65656565656565656565656500000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "transcript_sha256": "08785881622636d70840b4bc6aa50ea7e23d40cd8ed3ca09a02ba804ba72c8d5",
+        "note_on_hash": "transcript_sha256 is the SHA-256 of transcript_bytes, recomputed by the verifier and by both implementations. It is a cross-check on the byte string, not an independent input."
+      }
+    },
+    {
+      "id": "transcript.minimum-length",
+      "note": "Shortest possible transcript: both identifiers are one byte, so both length prefixes are 0x0001. Total = 16 + 1 + (2+1) + 1 + (2+1) + 1 + 128 = 153 bytes.",
+      "inputs": {
+        "client_id": "c",
+        "agent_id": "a",
+        "client_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "agent_nonce": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "client_pub": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "agent_pub": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+      },
+      "expected": {
+        "client_id_length_prefix": "0001",
+        "agent_id_length_prefix": "0001",
+        "transcript_length_bytes": 153,
+        "transcript_arithmetic": "16 (\"DLWP/1-handshake\") + 1 (separator) + 2 + 1 (client_id) + 1 (separator) + 2 + 1 (agent_id) + 1 (separator) + 32 + 32 + 32 + 32 (four fixed-width fields) = 153",
+        "transcript_bytes": "444c57502f312d68616e647368616b65000001630000016100000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+        "transcript_sha256": "2bc9f2aee396debe7308edeb15a0a152962c269fecc93663ea0c62f85e4c2258",
+        "note_on_length": "This is the floor of the format. An implementation that computes any other length here has mis-sized one of the three separators or one of the two length prefixes."
+      }
+    }
+  ],
+  "rejection_vectors": [
+    {
+      "id": "transcript.reject.leading-separator-confusion",
+      "note": "A naive concatenation without length prefixes would let client_id='c' with agent_id='a' collide with client_id='c\\x00a' and an empty agent_id. The length prefixes prevent it, and this vector pins that an implementation reproducing the naive form fails.",
+      "inputs": {
+        "client_id": "c\u0000a",
+        "agent_id": "",
+        "client_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "agent_nonce": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+        "client_pub": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+        "agent_pub": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8"
+      },
+      "expected": {
+        "transcript_length_bytes": 154,
+        "transcript_arithmetic": "16 + 1 + (2+3 for \"c\\x00a\") + 1 + (2+0 for the empty agent_id) + 1 + 128 = 154. This is one byte longer than transcript.minimum-length (153), because the empty agent_id contributes its 2-byte prefix and no payload while the client_id carries one extra byte.",
+        "note_on_differ": "The transcripts must be byte-distinct from transcript.minimum-length even though both describe a one-character split. The length prefix is what makes them distinct: without it, client_id=\"c\\x00a\" with an empty agent_id would serialise identically to client_id=\"c\" with agent_id=\"a\".",
+        "must_differ_from": "transcript.minimum-length"
+      }
+    }
+  ]
+}

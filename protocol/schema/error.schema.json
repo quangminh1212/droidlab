@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/error.schema.json",
+  "title": "DLWP/1 ERROR body",
+  "description": "Body of an ERROR (0xF0) frame. See RFC-0001 section 6. A fatal error must be followed by SESSION_END and the sender must close the connection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["code", "message", "severity"],
+  "properties": {
+    "code": {
+      "description": "Symbolic error code from the RFC-0001 section 6.2 registry.",
+      "type": "string",
+      "enum": [
+        "ERR_UNSUPPORTED_MESSAGE",
+        "ERR_UNSUPPORTED_FEATURE",
+        "ERR_UNSUPPORTED_HEADER",
+        "ERR_FRAME_TOO_LARGE",
+        "ERR_MALFORMED",
+        "ERR_VERSION_MISMATCH",
+        "ERR_HANDSHAKE_MISMATCH",
+        "ERR_UNAUTHORIZED",
+        "ERR_PAIRING_REQUIRED",
+        "ERR_PAIRING_REVOKED",
+        "ERR_REPLAY_DETECTED",
+        "ERR_BAD_STATE",
+        "ERR_UNEXPECTED_MESSAGE",
+        "ERR_CHANNEL_UNKNOWN",
+        "ERR_CHANNEL_LIMIT",
+        "ERR_PERMISSION_DENIED",
+        "ERR_NOT_ALLOWED",
+        "ERR_TIMEOUT",
+        "ERR_BUSY",
+        "ERR_RESOURCE_EXHAUSTED",
+        "ERR_IO",
+        "ERR_INTERNAL"
+      ]
+    },
+    "message": {
+      "description": "Human-readable explanation in English. Must not contain stack traces, file contents, secrets or device identifiers.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "severity": {
+      "description": "warning: informational, session continues. recoverable: only the affected operation or channel fails. fatal: must be followed by SESSION_END and the connection must be closed.",
+      "type": "string",
+      "enum": ["warning", "recoverable", "fatal"]
+    },
+    "request_type": {
+      "description": "Message type of the frame that failed.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "request_seq": {
+      "description": "Sequence number of the frame that failed.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "details": {
+      "description": "Structured, capability-specific detail. For ERR_NOT_ALLOWED the key 'reason' carries deny_listed, not_in_allow_list, argument_rejected or denied_by_operator.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

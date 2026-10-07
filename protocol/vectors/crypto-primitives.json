@@ -1,0 +1,139 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0002",
+  "protocol_version": "1.0",
+  "description": "Deterministic test vectors for the cryptographic primitives behind pairing and the session (RFC-0002 sections 4 and 5): the seed rule that turns a label into key material, the HKDF-SHA256 schedule, and the AEAD construction. Every expected value is derived rather than random, so both implementations reproduce the same bytes from the same inputs. No secret in this file is used by a shipped build.",
+  "seed_rule": {
+    "formula": "key(seed) = SHA-256(\"DLWP/1-test-key\" || 0x00 || seed)",
+    "note": "No key bytes are written literally in this file. An implementation derives every byte string with the formula, so the vectors stay auditable and free of copy-paste errors."
+  },
+  "labels": {
+    "note": "Exact ASCII strings, case-sensitive, used as HKDF info or as HMAC message prefixes. A one-character difference yields a different key and a session that fails at the first record.",
+    "transcript_label": "DLWP/1-handshake",
+    "session_salt_label": "DLWP/1-session",
+    "pairing_salt_label": "DLWP/1-pairing",
+    "pairing_secret_info": "DLWP/1-pairing-secret",
+    "pairing_agent_proof_label": "DLWP/1-pairing-agent",
+    "pairing_controller_proof_label": "DLWP/1-pairing-controller",
+    "pairing_confirmation_label": "DLWP/1-pairing-confirm",
+    "pairing_code_label": "DLWP/1-pairing-code",
+    "fingerprint_label": "DLWP/1-fingerprint",
+    "txt_label": "DLWP/1-txt",
+    "exporter_label": "DLWP/1-exporter",
+    "c2a_key_info": "DLWP/1-c2a-key",
+    "a2c_key_info": "DLWP/1-a2c-key",
+    "c2a_iv_info": "DLWP/1-c2a-iv",
+    "a2c_iv_info": "DLWP/1-a2c-iv",
+    "auth_client_label": "DLWP/1-client",
+    "auth_agent_label": "DLWP/1-agent"
+  },
+  "algorithms": {
+    "kdf": "HKDF per RFC 5869 with SHA-256",
+    "aead": "AES-256-GCM with a 96-bit nonce and a 128-bit tag",
+    "key_agreement": "X25519 per RFC 7748",
+    "signature": "Ed25519 per RFC 8032",
+    "hmac": "HMAC-SHA256 per RFC 2104",
+    "hash": "SHA-256 per FIPS 180-4"
+  },
+  "derivation_recipes": {
+    "fingerprint": {
+      "input": "\"DLWP/1-fingerprint\" || 0x00 || identity_pub (32 bytes)",
+      "hash": "SHA-256",
+      "format": "Uppercase hex of the first 8 digest bytes, grouped xxxx-xxxx-xxxx-xxxx.",
+      "note": "The example in RFC-0002 section 3.2, 9F3C-1A08-B7E2-44D1, is illustrative only and is not derived from any seed."
+    },
+    "pairing_secret": {
+      "input": "shared || dh_static || pairing_token, where shared = X25519(ctrl_ephemeral_sk, agent_ephemeral_pub) and dh_static = X25519(ctrl_identity_sk, agent_identity_pub)",
+      "salt": "\"DLWP/1-pairing\" || 0x00 || pairing_id",
+      "extract": "HKDF-Extract",
+      "expand": "HKDF-Expand(prk, \"DLWP/1-pairing-secret\", 32)"
+    },
+    "pairing_code": {
+      "input": "\"DLWP/1-pairing-code\" || 0x00 || pairing_secret || ctrl_nonce || agent_nonce",
+      "hash": "SHA-256",
+      "format": "decimal(uint32_be(digest[0..4]) mod 1000000), zero padded to 6 digits"
+    },
+    "pairing_proofs": {
+      "controller": "HMAC-SHA256(pairing_secret, \"DLWP/1-pairing-controller\" || ctrl_nonce || agent_nonce)",
+      "agent": "HMAC-SHA256(pairing_secret, \"DLWP/1-pairing-agent\" || agent_nonce || ctrl_nonce)",
+      "confirmation": "HMAC-SHA256(pairing_secret, \"DLWP/1-pairing-confirm\" || agent_proof || controller_proof)"
+    },
+    "session_keys": {
+      "input": "shared || pairing_secret, where shared = X25519(ctrl_ephemeral_sk, agent_ephemeral_pub) for this connection",
+      "salt": "\"DLWP/1-session\" || 0x00 || session_id",
+      "extract": "HKDF-Extract",
+      "expand": [
+        { "name": "c2a_key", "info": "DLWP/1-c2a-key", "length": 32 },
+        { "name": "a2c_key", "info": "DLWP/1-a2c-key", "length": 32 },
+        { "name": "c2a_iv", "info": "DLWP/1-c2a-iv", "length": 4 },
+        { "name": "a2c_iv", "info": "DLWP/1-a2c-iv", "length": 4 },
+        { "name": "exporter", "info": "DLWP/1-exporter concatenated with transcript_hash (32 bytes)", "length": 32 }
+      ]
+    },
+    "auth_proofs": {
+      "client": "HMAC-SHA256(pairing_secret, \"DLWP/1-client\" || transcript_hash)",
+      "agent": "HMAC-SHA256(pairing_secret, \"DLWP/1-agent\" || transcript_hash)"
+    },
+    "nonce_layout": {
+      "form": "iv_prefix (4 bytes) || sequence_number (8 bytes, big-endian)",
+      "note": "The sender's per-direction key is unique to the direction, and the sequence number never repeats within a session, so a nonce can never repeat under a given key. See RFC-0002 section 5.2."
+    }
+  },
+  "signature_vectors": [
+    {
+      "id": "ed25519.txt-payload.basic",
+      "note": "Pins the seed handling for the discovery advertisement signature. The payload follows the canonical form in RFC-0003 section 2.1.",
+      "seed": "droidlab-test-seed-01",
+      "signature_input": "DLWP/1-txt\u0000v=1.0\u000Aid=11111111-2222-4333-8444-555555555555\u000Afp=0000-0000-0000-0000\u000Acaps=screen.mirror,input.touch\u000Aport=45917",
+      "signature_output_length": 64
+    },
+    {
+      "id": "ed25519.qr-payload.basic",
+      "note": "Pins the signature over the pairing URI. The URI value here is synthetic; what matters is the exact byte string that is signed and the seed handling.",
+      "seed": "droidlab-test-seed-02",
+      "signature_input": "droidlab://pair?v=1&pid=AAECAwQFBgcICQoLDA0ODw&tok=ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8&host=192.0.2.10&port=45917&apk=QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8&aep=YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8&name=Test%20Device&exp=1735689600",
+      "signature_output_length": 64
+    }
+  ],
+  "rejection_vectors": [
+    {
+      "id": "x25519.reject.all-zero-output",
+      "note": "The low-order point produces an all-zero shared secret. An implementation must refuse the connection rather than derive keys from it. This is the contributory-behaviour check required by RFC-0002 section 7.",
+      "peer_public_key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": "rejected",
+      "expected_error": "ERR_UNAUTHORIZED"
+    },
+    {
+      "id": "nonce.reject.reused-sequence",
+      "note": "A frame whose sequence number has already been accepted on the session must terminate the session, not be silently processed.",
+      "first_sequence_number": 417,
+      "second_sequence_number": 417,
+      "expected": "rejected",
+      "expected_error": "ERR_REPLAY_DETECTED"
+    },
+    {
+      "id": "nonce.reject.out-of-window",
+      "note": "The reordering window is 32 frames. A frame arriving 33 behind the highest accepted sequence number is rejected and terminates the session.",
+      "highest_accepted": 1000,
+      "received": 967,
+      "window": 32,
+      "expected": "rejected",
+      "expected_error": "ERR_REPLAY_DETECTED"
+    },
+    {
+      "id": "nonce.accept.inside-window",
+      "note": "A frame 31 behind the highest accepted sequence number is inside the window and is accepted once.",
+      "highest_accepted": 1000,
+      "received": 969,
+      "window": 32,
+      "expected": "accepted"
+    },
+    {
+      "id": "aead.reject.tampered-header",
+      "note": "The 24-byte frame header is the associated data. Changing a single header byte must fail tag verification.",
+      "mutated_field": "sequence_number",
+      "expected": "rejected",
+      "expected_error": "ERR_MALFORMED"
+    }
+  ]
+}

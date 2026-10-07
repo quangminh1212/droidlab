@@ -1,0 +1,426 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "An ordered session transcript from the first byte to the last, used as an integration vector. Both implementations replay it and must produce the same states, the same negotiated values and, for the failing steps, the same errors. Steps marked 'expect' are assertions the runner checks; steps marked 'send' and 'recv' are the frames of the exchange. Bodies are given in decoded form so the vector stays readable; the byte encoding is pinned by framing-basic.json.",
+  "preconditions": {
+    "pairing_exists": true,
+    "pairing_id": "AAECAwQFBgcICQoLDA0ODw",
+    "agent_capabilities": [
+      "screen.mirror",
+      "input.touch",
+      "input.key",
+      "input.text",
+      "clipboard.read",
+      "clipboard.write",
+      "device.info",
+      "log.stream",
+      "telemetry.stats"
+    ],
+    "agent_disabled": [],
+    "controller_offered": [
+      "screen.mirror",
+      "input.touch",
+      "input.key",
+      "device.info",
+      "telemetry.stats",
+      "shell.exec",
+      "app.install"
+    ],
+    "controller_supported_versions": ["1.0"],
+    "agent_supported_versions": ["1.0"],
+    "agent_limits": {
+      "max_frame_bytes": 16777216,
+      "max_channels": 8,
+      "max_video_width": 1920,
+      "max_video_height": 1080,
+      "max_video_fps": 60,
+      "max_video_bitrate": 16000000,
+      "max_file_chunk": 262144,
+      "shell_timeout_ms": 30000,
+      "max_gesture_steps": 256
+    }
+  },
+  "expected_negotiated_capabilities": [
+    "screen.mirror",
+    "input.touch",
+    "input.key",
+    "device.info",
+    "telemetry.stats"
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "actor": "controller",
+      "send": {
+        "name": "HELLO",
+        "channel_id": 0,
+        "sequence_number": 1,
+        "flags": 0,
+        "body": {
+          "proto": "1.0",
+          "versions_supported": ["1.0"],
+          "client_id": "11111111-2222-4333-8444-555555555555",
+          "client_name": "lab-workstation",
+          "client_nonce": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+          "client_pub": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+          "pairing_id": "AAECAwQFBgcICQoLDA0ODw",
+          "capabilities_offered": ["screen.mirror", "input.touch", "input.key", "device.info", "telemetry.stats", "shell.exec", "app.install"],
+          "platform": "windows"
+        }
+      },
+      "expect": ["agent_state=handshaking", "agent_has_not_sent_any_encrypted_frame"]
+    },
+    {
+      "step": 2,
+      "actor": "agent",
+      "recv": "step 1",
+      "send": {
+        "name": "HELLO_ACK",
+        "channel_id": 0,
+        "sequence_number": 1,
+        "flags": 0,
+        "body": {
+          "proto": "1.0",
+          "agent_id": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+          "agent_name": "Pixel 7 - bench 3",
+          "agent_nonce": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+          "agent_pub": "YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8",
+          "session_id": "Dw4NDAsKCQgHBgUEAwIBAA",
+          "transcript_hash": "@EFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+          "capabilities": ["screen.mirror", "input.touch", "input.key", "input.text", "clipboard.read", "clipboard.write", "device.info", "log.stream", "telemetry.stats"],
+          "limits": {
+            "max_frame_bytes": 16777216,
+            "max_channels": 8,
+            "max_video_width": 1920,
+            "max_video_height": 1080,
+            "max_video_fps": 60,
+            "max_video_bitrate": 16000000,
+            "max_file_chunk": 262144,
+            "shell_timeout_ms": 30000,
+            "max_gesture_steps": 256
+          },
+          "server_time_ms": 1735689600000,
+          "max_frame_bytes": 16777216
+        }
+      },
+      "expect": ["controller_computes_transcript_hash_from_received_bytes", "controller_derives_session_keys", "controller_state=authenticating"]
+    },
+    {
+      "step": 3,
+      "actor": "controller",
+      "send": {
+        "name": "AUTH",
+        "channel_id": 0,
+        "sequence_number": 2,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "pairing_id": "AAECAwQFBgcICQoLDA0ODw",
+          "proof": "proof(controller, pairing_secret, transcript_hash)",
+          "client_fingerprint": "9F3C-1A08-B7E2-44D1"
+        }
+      },
+      "expect": ["first_encrypted_frame_in_this_direction", "sequence_number=2"]
+    },
+    {
+      "step": 4,
+      "actor": "agent",
+      "recv": "step 3",
+      "send": {
+        "name": "AUTH_OK",
+        "channel_id": 0,
+        "sequence_number": 2,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "session_id": "Dw4NDAsKCQgHBgUEAwIBAA",
+          "agent_fingerprint": "DE34-A1B0-77C9-9021",
+          "negotiated": {
+            "proto": "1.0",
+            "capabilities": ["screen.mirror", "input.touch", "input.key", "device.info", "telemetry.stats"]
+          },
+          "session_timeout_s": 30
+        }
+      },
+      "expect": [
+        "proof verified against the pairing secret",
+        "session established",
+        "negotiated set is the intersection of agent capabilities, minus disabled, and controller offered",
+        "shell.exec and app.install are absent from the negotiated set"
+      ]
+    },
+    {
+      "step": 5,
+      "actor": "controller",
+      "send": {
+        "name": "DEVICE_INFO",
+        "channel_id": 0,
+        "sequence_number": 3,
+        "flags": 1,
+        "encrypted": true,
+        "body": {}
+      }
+    },
+    {
+      "step": 6,
+      "actor": "agent",
+      "recv": "step 5",
+      "send": {
+        "name": "DEVICE_INFO_RESULT",
+        "channel_id": 0,
+        "sequence_number": 3,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "manufacturer": "Google",
+          "model": "Pixel 7",
+          "android_release": "14",
+          "android_sdk": 34,
+          "screen_width": 1080,
+          "screen_height": 2400,
+          "density_dpi": 420,
+          "battery_level": 87,
+          "is_rooted": false,
+          "adb_wireless_enabled": false,
+          "adb_pairing_required": true
+        }
+      },
+      "expect": ["serial_redacted is absent or a 12-hex-char pseudonym, never a hardware serial"]
+    },
+    {
+      "step": 7,
+      "actor": "controller",
+      "send": {
+        "name": "CHANNEL_OPEN",
+        "channel_id": 0,
+        "sequence_number": 4,
+        "flags": 1,
+        "encrypted": true,
+        "body": { "purpose": "video", "params": { "codec": "avc" } }
+      },
+      "expect": ["controller allocates an odd channel id: 1"]
+    },
+    {
+      "step": 8,
+      "actor": "agent",
+      "recv": "step 7",
+      "send": {
+        "name": "CHANNEL_OPENED",
+        "channel_id": 0,
+        "sequence_number": 4,
+        "flags": 1,
+        "encrypted": true,
+        "body": { "purpose": "video", "channel_id": 1, "params": { "codec": "avc" } }
+      }
+    },
+    {
+      "step": 9,
+      "actor": "controller",
+      "send": {
+        "name": "VIDEO_START",
+        "channel_id": 1,
+        "sequence_number": 5,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "codec": "avc",
+          "max_width": 2560,
+          "max_height": 1440,
+          "fps": 120,
+          "bitrate": 4000000,
+          "keyframe_interval_s": 2,
+          "include_frames": true,
+          "orientation": "auto"
+        }
+      },
+      "expect": [
+        "requested size and frame rate exceed the agent limits and must be clamped, not refused",
+        "effective size is 1080x2400 clamped to 1080x1920 then to the screen aspect the encoder accepts"
+      ]
+    },
+    {
+      "step": 10,
+      "actor": "agent",
+      "recv": "step 9",
+      "send": {
+        "name": "VIDEO_CONFIG",
+        "channel_id": 1,
+        "sequence_number": 5,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "codec": "avc",
+          "width": 1080,
+          "height": 1920,
+          "csd": "csd-placeholder-base64",
+          "screen_width": 1080,
+          "screen_height": 2400,
+          "rotation": 0
+        }
+      },
+      "expect": ["controller feeds csd to the hardware decoder before the first frame"]
+    },
+    {
+      "step": 11,
+      "actor": "agent",
+      "send": {
+        "name": "VIDEO_FRAME",
+        "channel_id": 1,
+        "sequence_number": 6,
+        "flags": 1,
+        "encrypted": true,
+        "body": { "pts_us": 0, "flags": 1, "data": "access-unit-keyframe", "sequence": 0 }
+      },
+      "expect": ["flags bit 0 set: this is a keyframe", "controller enters mirroring state"]
+    },
+    {
+      "step": 12,
+      "actor": "agent",
+      "send": {
+        "name": "VIDEO_FRAME",
+        "channel_id": 1,
+        "sequence_number": 7,
+        "flags": 1,
+        "encrypted": true,
+        "body": { "pts_us": 33333, "flags": 0, "data": "access-unit-delta", "sequence": 1 }
+      }
+    },
+    {
+      "step": 13,
+      "actor": "controller",
+      "note": "A tap at the centre of the screen, in normalised coordinates so it survives rotation.",
+      "send": {
+        "name": "INPUT_TOUCH",
+        "channel_id": 1,
+        "sequence_number": 8,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "action": "down",
+          "gesture_id": 7,
+          "pointers": [{ "id": 0, "x": 5000, "y": 5000 }],
+          "screen_width": 1080,
+          "screen_height": 2400
+        }
+      }
+    },
+    {
+      "step": 14,
+      "actor": "controller",
+      "send": {
+        "name": "INPUT_TOUCH",
+        "channel_id": 1,
+        "sequence_number": 9,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "action": "up",
+          "gesture_id": 7,
+          "pointers": [{ "id": 0, "x": 5000, "y": 5000 }],
+          "screen_width": 1080,
+          "screen_height": 2400
+        }
+      },
+      "expect": ["agent maps 5000/10000 onto 540,1200 device pixels"]
+    },
+    {
+      "step": 15,
+      "actor": "controller",
+      "note": "A shell command that the policy rejects, because shell.exec is absent from the negotiated set.",
+      "send": {
+        "name": "SHELL_EXEC",
+        "channel_id": 1,
+        "sequence_number": 10,
+        "flags": 1,
+        "encrypted": true,
+        "body": { "command": "/system/bin/getprop", "args": ["ro.build.version.sdk"] }
+      }
+    },
+    {
+      "step": 16,
+      "actor": "agent",
+      "recv": "step 15",
+      "send": {
+        "name": "ERROR",
+        "channel_id": 1,
+        "sequence_number": 8,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "code": "ERR_UNSUPPORTED_FEATURE",
+          "message": "shell.exec is not in the negotiated capability set",
+          "severity": "recoverable",
+          "request_type": 80,
+          "request_seq": 10
+        }
+      },
+      "expect": ["session survives", "video stream continues", "controller surfaces the error without tearing down the session"]
+    },
+    {
+      "step": 17,
+      "actor": "controller",
+      "deliberate_replay": true,
+      "note": "A replayed frame: the same sequence number as step 13, which was already accepted. This is the adversarial case the monotonic rule exists for, so the step is marked deliberate_replay and is exempt from the verifier's own monotonicity check. It must terminate the session.",
+      "send": {
+        "name": "INPUT_TOUCH",
+        "channel_id": 1,
+        "sequence_number": 8,
+        "flags": 1,
+        "encrypted": true,
+        "body": {
+          "action": "down",
+          "gesture_id": 9,
+          "pointers": [{ "id": 0, "x": 1000, "y": 1000 }],
+          "screen_width": 1080,
+          "screen_height": 2400
+        }
+      }
+    },
+    {
+      "step": 18,
+      "actor": "agent",
+      "recv": "step 17",
+      "send": {
+        "name": "ERROR",
+        "channel_id": 0,
+        "sequence_number": 9,
+        "flags": 3,
+        "encrypted": true,
+        "body": {
+          "code": "ERR_REPLAY_DETECTED",
+          "message": "sequence number 8 was already accepted on this session",
+          "severity": "fatal",
+          "request_type": 64,
+          "request_seq": 8
+        }
+      },
+      "expect": ["severity is fatal", "agent will send SESSION_END and close"]
+    },
+    {
+      "step": 19,
+      "actor": "agent",
+      "send": {
+        "name": "SESSION_END",
+        "channel_id": 0,
+        "sequence_number": 10,
+        "flags": 5,
+        "encrypted": true,
+        "body": { "reason": "protocol_error", "code": "ERR_REPLAY_DETECTED" }
+      },
+      "expect": [
+        "connection closed",
+        "session keys wiped on both sides",
+        "controller records the abnormal termination in the session log"
+      ]
+    }
+  ],
+  "assertions": {
+    "sequence_numbers": "Sequence numbers are session-global and increase by one per frame sent by that side. The two directions number independently, which is why both sides legitimately use sequence number 1 for their first frame.",
+    "state_machine": [
+      "idle -> discovering -> connecting -> handshaking -> authenticating -> established -> streaming -> closing -> closed",
+      "any_state_on_fatal_error -> closing"
+    ],
+    "determinism": "Replaying this transcript twice must produce byte-identical AUTH and AUTH_OK frames given fixed nonces and keys, which is what makes it usable as an integration vector."
+  }
+}

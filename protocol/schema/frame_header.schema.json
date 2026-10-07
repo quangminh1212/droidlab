@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/frame_header.schema.json",
+  "title": "DLWP/1 Frame Header",
+  "description": "The fixed 24-byte header that prefixes every DLWP/1 frame. See RFC-0001 section 3. On the wire every field is big-endian. This schema describes the decoded logical form used by the conformance vectors and the diagnostic frame dump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "magic",
+    "version",
+    "flags",
+    "header_length",
+    "message_type",
+    "channel_id",
+    "sequence_number",
+    "acknowledgment",
+    "body_length"
+  ],
+  "properties": {
+    "magic": {
+      "description": "ASCII 'DLWP'. A mismatch terminates the connection.",
+      "const": "DLWP"
+    },
+    "version": {
+      "description": "Protocol major version. 1 for DLWP/1.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 255
+    },
+    "flags": {
+      "description": "Bit field defined in RFC-0001 section 3.1. Bits 4-7 are reserved and must be zero on send.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "header_length": {
+      "description": "Total header length in bytes, including this 24-byte prefix. Must be 24 in version 1.0.",
+      "const": 24
+    },
+    "message_type": {
+      "description": "Frame type. See RFC-0001 section 4 for the registry.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "channel_id": {
+      "description": "Logical channel. 0 is the control channel and is always valid.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "sequence_number": {
+      "description": "Per-session, monotonically increasing, starts at 1. Receivers reject non-increasing values with ERR_REPLAY_DETECTED.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "acknowledgment": {
+      "description": "Highest received sequence number observed on this channel, or 0 when not applicable.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "body_length": {
+      "description": "Length of the body in bytes, excluding the header. For an encrypted frame this is 12 + plaintext_length + 16.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777217
+    }
+  },
+  "allOf": [
+    {
+      "description": "body_length must not exceed MAX_FRAME_BYTES plus the AEAD overhead.",
+      "if": {
+        "properties": { "body_length": { "minimum": 16777217 } },
+        "required": ["body_length"]
+      },
+      "then": { "description": "would be rejected with ERR_FRAME_TOO_LARGE" }
+    }
+  ],
+  "$comment": "Encrypted bodies are 12 + L + 16 bytes, so the maximum legal body_length for a 16 MiB plaintext is 16777244. The schema caps body_length at 16777217 only to express the header's integer width; the enforcement limit lives in RFC-0001 section 2 and is exercised by protocol/vectors/malformed.json."
+}

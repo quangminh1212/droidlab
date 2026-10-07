@@ -1,0 +1,277 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "Malformed frames and the exact error each must produce. Every case here is a deterministic, byte-level input, so both implementations can be checked without a peer. A receiver that parses one of these successfully, or that reports a different code or severity, is non-conformant.",
+  "vectors": [
+    {
+      "id": "malformed.bad-magic",
+      "note": "The first four bytes must be ASCII 'DLWP'. Nothing may be parsed before the magic is checked.",
+      "frame": "444c58500100180500000000000000010000000000000003000000",
+      "expected": "close_connection",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.version-unsupported",
+      "note": "A version the receiver does not implement. The receiver must not attempt a best-effort parse (RFC-0001 section 10).",
+      "frame": "444c57500200180500000000000000010000000000000003000000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_VERSION_MISMATCH",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.header-length-25",
+      "note": "Version 1.0 defines no header extensions, so any header_length other than 24 is rejected. A receiver must not try to skip the extension bytes.",
+      "frame": "444c57500101190500000000000000010000000000000000000000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_UNSUPPORTED_HEADER",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.header-length-zero",
+      "note": "A zero header_length would make the header shorter than its own fixed prefix. Reject before reading the body.",
+      "frame": "444c57500100180500000000000000010000000000000000000000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.frame-too-large",
+      "note": "A declared body larger than max_frame_bytes must be rejected by reading the header only, without allocating the declared size. 0xFFFFFFFF is the worst case an attacker can request.",
+      "frame": "444c575001011832000000000000000100000000000000ffffffff",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_FRAME_TOO_LARGE",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.body-not-cbor",
+      "note": "The body begins with 0xFF, which is not a valid cbOR initial byte. A receiver must fail the frame rather than pass the bytes through to a per-message parser.",
+      "frame": "444c57500100180500000000000000010000000000000008000004ff00000000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.cbor-indefinite-length-map",
+      "note": "Indefinite-length encodings are forbidden so that a message has exactly one byte encoding (RFC-0001 section 3.2). 0xBF opens an indefinite map.",
+      "frame": "444c5750010018050000000000000001000000000000000d000006bf616161626201ff0000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.cbor-non-shortest-integer",
+      "note": "A value that fits one byte must be encoded in one byte. 0x18 0x05 encodes 5 in two bytes, which is non-canonical.",
+      "frame": "444c5750010018400000000000000001000000000000000a00000aa1617818050000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.cbor-float",
+      "note": "The protocol defines no floating-point fields, so every float encoding is rejected rather than coerced.",
+      "frame": "444c5750010018400000000000000001000000000000000b00000ca16178f97e000000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.cbor-tag",
+      "note": "Tags are unused. 0xC2 opens tag 2, the positive bignum tag, which an attacker can use to smuggle a large integer past a naive length check.",
+      "frame": "444c5750010018400000000000000001000000000000000b00000ba16178c2410a0000",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.cbor-invalid-utf8",
+      "note": "0xFF is not a legal UTF-8 byte. A text key containing it must not be decoded with a replacement character.",
+      "frame": "444c57500100180500000000000000010000000000000006000003a161ff",
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.first-frame-not-hello",
+      "note": "HELLO must be the first frame of a session. A PING first is a protocol violation, not a warning.",
+      "frame": "444c57500100180500000000000000010000000000000003000000",
+      "first_frame_message_type": 5,
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_UNEXPECTED_MESSAGE",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.second-auth-rejected",
+      "note": "RFC-0001 section 6.2 registers ERR_UNEXPECTED_MESSAGE as fatal, so the session ends. A peer that repeats AUTH has broken the state machine, and continuing would mean guessing which of the two proofs was authoritative.",
+      "sequence": [
+        "HELLO",
+        "HELLO_ACK",
+        "AUTH",
+        "AUTH_OK",
+        "AUTH"
+      ],
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_UNEXPECTED_MESSAGE",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.unknown-message-type",
+      "note": "An unregistered message type is answered with a recoverable error and the session survives, so that a newer peer cannot break an older one by sending a frame it has learned.",
+      "frame": "444c5750010018fe00000000000000050000000000000003000000",
+      "expected": "error_session_continues",
+      "expected_error": "ERR_UNSUPPORTED_MESSAGE",
+      "expected_severity": "recoverable"
+    },
+    {
+      "id": "malformed.unknown-capability-command",
+      "note": "A registered message that the negotiated capability set does not include is refused, but the session continues.",
+      "message_type": 80,
+      "negotiated_capabilities": [
+        "screen.mirror",
+        "input.touch"
+      ],
+      "expected": "error_session_continues",
+      "expected_error": "ERR_UNSUPPORTED_FEATURE",
+      "expected_severity": "recoverable"
+    },
+    {
+      "id": "malformed.channel-not-opened",
+      "note": "An operation on a channel that was never opened is refused. Channel 0 is always open, so the frame must name a non-zero channel.",
+      "message_type": 50,
+      "channel_id": 7,
+      "open_channels": [
+        0,
+        3
+      ],
+      "expected": "error_session_continues",
+      "expected_error": "ERR_CHANNEL_UNKNOWN",
+      "expected_severity": "recoverable"
+    },
+    {
+      "id": "malformed.channel-limit",
+      "note": "The agent advertises max_channels; opening one more must be refused without disturbing the existing channels.",
+      "max_channels": 8,
+      "open_channels": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "requested_channel": 9,
+      "expected": "error_session_continues",
+      "expected_error": "ERR_CHANNEL_LIMIT",
+      "expected_severity": "recoverable"
+    },
+    {
+      "id": "malformed.missing-required-key",
+      "note": "A required key is absent, so the message cannot be executed. ERR_MALFORMED is fatal: the body failed validation and the peer cannot be trusted to resynchronise, so the connection closes rather than continuing in an undefined state.",
+      "message_type": 64,
+      "body": {
+        "action": "down"
+      },
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.wrong-value-type",
+      "note": "A string where an integer is required is a schema violation, not a coercible input. ERR_MALFORMED is fatal for the same reason as the missing-key case: silent coercion of a coordinate is how a mis-tap bug is born, and continuing after a schema failure leaves both peers disagreeing about the request.",
+      "message_type": 64,
+      "body": {
+        "action": "down",
+        "pointers": [
+          {
+            "id": 0,
+            "x": "1234",
+            "y": 5678
+          }
+        ]
+      },
+      "expected": "error_frame_then_close",
+      "expected_error": "ERR_MALFORMED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.unknown-extra-key-ignored",
+      "note": "The forward-compatibility rule: an unknown key in a body must be ignored, not rejected. This is the one case where a 'malformed-looking' body is accepted.",
+      "message_type": 64,
+      "body": {
+        "action": "down",
+        "pointers": [
+          {
+            "id": 0,
+            "x": 100,
+            "y": 200,
+            "pressure": 50,
+            "future_field": "ignored"
+          }
+        ],
+        "unknown_message_level_key": 12345
+      },
+      "expected": "accepted",
+      "expected_error": null,
+      "expected_severity": null
+    },
+    {
+      "id": "malformed.reserved-flag-bits-set",
+      "note": "Bits 4-7 of the flags byte are reserved. A receiver must ignore them rather than fail, so that the bits can be assigned later without a version bump.",
+      "frame": "444c5750f100180500000000000000010000000000000003000000",
+      "expected": "accepted",
+      "expected_error": null,
+      "expected_severity": null
+    },
+    {
+      "id": "malformed.body-length-shorter-than-declared",
+      "note": "A truncated frame is an I/O error, not a parse error: the receiver must wait for more bytes until the connection closes, then report ERR_IO.",
+      "declared_body_length": 81,
+      "received_body_length": 40,
+      "expected": "wait_then_error_on_close",
+      "expected_error": "ERR_IO",
+      "expected_severity": "recoverable"
+    }
+  ],
+  "sequence_vectors": [
+    {
+      "id": "malformed.sequence-not-monotonic",
+      "note": "The sequence number is session-global and must increase. A repeated value is treated as a replay attempt and is fatal, not recoverable.",
+      "sequence": [
+        1,
+        2,
+        3,
+        3
+      ],
+      "expected_error": "ERR_REPLAY_DETECTED",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "malformed.sequence-gap-within-window",
+      "note": "A gap inside the 32-frame reordering window is legal on a lossy link and must not be reported as a replay.",
+      "sequence": [
+        1,
+        2,
+        3,
+        5,
+        4,
+        6
+      ],
+      "expected": "accepted"
+    },
+    {
+      "id": "malformed.sequence-gap-beyond-window",
+      "note": "A frame that falls outside the reordering window is rejected and terminates the session, because accepting it would let an attacker replay very old frames indefinitely.",
+      "sequence": [
+        1,
+        2,
+        40,
+        3
+      ],
+      "expected_error": "ERR_REPLAY_DETECTED",
+      "expected_severity": "fatal"
+    }
+  ]
+}

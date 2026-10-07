@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/capabilities.schema.json",
+  "title": "DLWP/1 capability and limit payloads",
+  "description": "Bodies of GET_CAPABILITIES (0x10) and CAPABILITIES (0x11), and the limits map used by HELLO_ACK. See RFC-0001 section 7. negotiated.capabilities is the intersection of the agent's list and the controller's offered list; a feature absent from the intersection must not be used.",
+  "$defs": {
+    "CapabilityName": {
+      "type": "string",
+      "enum": [
+        "screen.mirror",
+        "screen.record",
+        "input.touch",
+        "input.key",
+        "input.text",
+        "input.gesture",
+        "clipboard.read",
+        "clipboard.write",
+        "shell.exec",
+        "file.read",
+        "file.write",
+        "log.stream",
+        "app.install",
+        "app.launch",
+        "device.info",
+        "adb.wireless",
+        "compression.deflate",
+        "telemetry.stats"
+      ]
+    },
+    "GetCapabilities": {
+      "title": "GET_CAPABILITIES (0x10)",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "Capabilities": {
+      "title": "CAPABILITIES (0x11)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proto", "capabilities"],
+      "properties": {
+        "proto": { "type": "string" },
+        "capabilities": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityName" },
+          "uniqueItems": true
+        },
+        "limits": { "$ref": "#/$defs/Limits" },
+        "disabled": {
+          "description": "Capabilities the agent implements but the operator has switched off, or that the platform permission did not grant. Always a subset of the capabilities the agent could offer.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/CapabilityName" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "Limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_frame_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216, "default": 16777216 },
+        "max_channels": { "type": "integer", "minimum": 1, "maximum": 64, "default": 8 },
+        "max_video_width": { "type": "integer", "minimum": 16, "maximum": 4096, "default": 1920 },
+        "max_video_height": { "type": "integer", "minimum": 16, "maximum": 4096, "default": 1080 },
+        "max_video_fps": { "type": "integer", "minimum": 1, "maximum": 120, "default": 60 },
+        "max_video_bitrate": { "type": "integer", "minimum": 64000, "default": 16000000 },
+        "max_file_chunk": { "type": "integer", "minimum": 1024, "maximum": 4194304, "default": 262144 },
+        "shell_timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000, "default": 30000 },
+        "max_gesture_steps": { "type": "integer", "minimum": 1, "maximum": 1024, "default": 256 },
+        "max_pending_handshakes": { "type": "integer", "minimum": 1, "maximum": 64, "default": 4 }
+      }
+    }
+  }
+}

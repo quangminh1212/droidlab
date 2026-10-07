@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/input.schema.json",
+  "title": "DLWP/1 input payloads",
+  "description": "Bodies of the input injection frames defined in RFC-0001 section 8.2. Coordinates are either device pixels or, when screen_width and screen_height are present, integers in 0..10000 (ten-thousandths of the screen). The normalised form is recommended because it survives rotation and resolution changes.",
+  "$defs": {
+    "Pointer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "x", "y"],
+      "properties": {
+        "id": { "description": "Stable pointer id for the duration of one gesture.", "type": "integer", "minimum": 0, "maximum": 10 },
+        "x": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "y": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "InputTouch": {
+      "title": "INPUT_TOUCH (0x40)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "pointers"],
+      "properties": {
+        "action": { "type": "string", "enum": ["down", "move", "up", "cancel"] },
+        "pointers": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/$defs/Pointer" }
+        },
+        "gesture_id": { "type": "integer", "minimum": 0 },
+        "screen_width": { "description": "Present when x/y are normalised.", "type": "integer", "minimum": 1 },
+        "screen_height": { "description": "Present when x/y are normalised.", "type": "integer", "minimum": 1 },
+        "pressure": { "description": "Percentage in 0..100, used because the protocol defines no floating-point fields.", "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "dependentRequired": {
+        "screen_width": ["screen_height"],
+        "screen_height": ["screen_width"]
+      }
+    },
+    "InputKey": {
+      "title": "INPUT_KEY (0x41)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "keycode"],
+      "properties": {
+        "action": { "type": "string", "enum": ["down", "up"] },
+        "keycode": { "description": "Android KeyEvent keycode.", "type": "integer", "minimum": 0, "maximum": 999 },
+        "meta_state": { "description": "Android MetaKeyKeyListener bitmask.", "type": "integer", "minimum": 0 },
+        "unicode": { "description": "Optional alternative Unicode code point.", "type": "integer", "minimum": 0, "maximum": 1114111 }
+      }
+    },
+    "InputText": {
+      "title": "INPUT_TEXT (0x42)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 8192 },
+        "replace": { "description": "Clear the focused field before committing.", "type": "boolean", "default": false }
+      }
+    },
+    "InputScroll": {
+      "title": "INPUT_SCROLL (0x43)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dx", "dy"],
+      "properties": {
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 },
+        "dx": { "type": "integer" },
+        "dy": { "type": "integer" },
+        "screen_width": { "type": "integer", "minimum": 1 },
+        "screen_height": { "type": "integer", "minimum": 1 },
+        "unit": { "type": "string", "enum": ["pixel", "line"], "default": "pixel" }
+      }
+    },
+    "InputGesture": {
+      "title": "INPUT_GESTURE (0x44)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "pointers"],
+            "properties": {
+              "delay_ms": { "type": "integer", "minimum": 0, "maximum": 60000, "default": 0 },
+              "action": { "type": "string", "enum": ["down", "move", "up", "cancel"] },
+              "pointers": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 10,
+                "items": { "$ref": "#/$defs/Pointer" }
+              }
+            }
+          }
+        },
+        "repeat": { "type": "integer", "minimum": 1, "maximum": 100, "default": 1 }
+      }
+    }
+  }
+}

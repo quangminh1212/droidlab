@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://droidlab.dev/schema/pairing.schema.json",
+  "title": "DLWP/1 pairing payloads",
+  "description": "Bodies of the pairing frames defined in RFC-0002 section 4.6. Pairing runs on a separate TCP connection from the session connection and is closed once the record is persisted.",
+  "$defs": {
+    "PairRequest": {
+      "title": "PAIR_REQUEST (0x0A) - controller to agent",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pairing_id",
+        "v",
+        "controller_id",
+        "controller_name",
+        "controller_identity_pub",
+        "controller_ephemeral_pub",
+        "controller_nonce"
+      ],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url", "minLength": 22, "maxLength": 24 },
+        "v": { "type": "string", "const": "1.0" },
+        "controller_id": { "type": "string", "format": "uuid" },
+        "controller_name": { "type": "string", "maxLength": 64 },
+        "controller_identity_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "controller_ephemeral_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "controller_nonce": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 }
+      }
+    },
+    "PairResponse": {
+      "title": "PAIR_RESPONSE (0x0B) - agent to controller",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pairing_id",
+        "agent_id",
+        "agent_name",
+        "agent_identity_pub",
+        "agent_ephemeral_pub",
+        "agent_nonce",
+        "proof",
+        "device_info_summary"
+      ],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "agent_id": { "type": "string", "format": "uuid" },
+        "agent_name": { "type": "string", "maxLength": 64 },
+        "agent_identity_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "agent_ephemeral_pub": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "agent_nonce": { "type": "string", "contentEncoding": "base64url", "minLength": 43, "maxLength": 43 },
+        "proof": {
+          "description": "HMAC-SHA256(pairing_secret, 'DLWP/1-pairing-agent' || agent_nonce || controller_nonce). RFC-0002 section 4.5.",
+          "type": "string",
+          "contentEncoding": "base64url",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "device_info_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["manufacturer", "model", "android_release", "android_sdk"],
+          "properties": {
+            "manufacturer": { "type": "string" },
+            "model": { "type": "string" },
+            "android_release": { "type": "string" },
+            "android_sdk": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "PairConfirm": {
+      "title": "PAIR_CONFIRM (0x0C) - agent to controller",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairing_id", "confirmation"],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "confirmation": {
+          "description": "HMAC-SHA256(pairing_secret, 'DLWP/1-pairing-confirm' || agent_proof || controller_proof). RFC-0002 section 4.5.",
+          "type": "string",
+          "contentEncoding": "base64url",
+          "minLength": 43,
+          "maxLength": 43
+        }
+      }
+    },
+    "PairReject": {
+      "title": "PAIR_REJECT (0x0D) - agent to controller",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairing_id", "reason"],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "reason": {
+          "type": "string",
+          "enum": ["denied", "code_mismatch", "expired", "rate_limited", "already_paired", "internal"]
+        },
+        "message": { "type": "string", "maxLength": 256 }
+      }
+    },
+    "PairStatus": {
+      "title": "PAIR_STATUS (0x0E) - agent to controller",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pairing_id", "state"],
+      "properties": {
+        "pairing_id": { "type": "string", "contentEncoding": "base64url" },
+        "state": {
+          "type": "string",
+          "enum": ["awaiting_user", "awaiting_controller", "confirmed", "rejected"]
+        },
+        "retry_after_ms": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -1,0 +1,114 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "Version negotiation (RFC-0001 section 5 and section 10). The rule is highest common version with no downgrade guessing: a peer must not silently fall back to an older version, because a silent fallback turns a protocol bug into corrupt behaviour.",
+  "rule": "highest_common_version_or_fail",
+  "vectors": [
+    {
+      "id": "version.exact-match",
+      "controller_supported": ["1.0"],
+      "agent_supported": ["1.0"],
+      "expected_negotiated": "1.0",
+      "expected_error": null
+    },
+    {
+      "id": "version.controller-newer-known",
+      "note": "The controller knows 1.0 and 1.1; the agent knows only 1.0. The agreed version is 1.0 and the controller must behave as a 1.0 controller for the rest of the session.",
+      "controller_supported": ["1.1", "1.0"],
+      "agent_supported": ["1.0"],
+      "expected_negotiated": "1.0",
+      "expected_error": null
+    },
+    {
+      "id": "version.agent-newer-known",
+      "controller_supported": ["1.0"],
+      "agent_supported": ["1.1", "1.0"],
+      "expected_negotiated": "1.0",
+      "expected_error": null
+    },
+    {
+      "id": "version.both-newer-and-older",
+      "controller_supported": ["2.0", "1.1", "1.0"],
+      "agent_supported": ["1.1", "1.0"],
+      "expected_negotiated": "1.1",
+      "expected_error": null,
+      "note_on_ordering": "The list is most-preferred-first on both sides. The agreed version is the highest that appears in both lists, which is 1.1, not the controller's first preference of 2.0."
+    },
+    {
+      "id": "version.no-overlap",
+      "controller_supported": ["2.0"],
+      "agent_supported": ["1.0"],
+      "expected_negotiated": null,
+      "expected_error": "ERR_VERSION_MISMATCH",
+      "expected_severity": "fatal",
+      "expected_action": "send ERROR then close, do not attempt a parse"
+    },
+    {
+      "id": "version.agent-does-not-downgrade-silently",
+      "note": "The controller offers only an unknown version. The agent must refuse rather than assuming the controller meant the version it supports.",
+      "controller_supported": ["9.9"],
+      "agent_supported": ["1.0"],
+      "expected_negotiated": null,
+      "expected_error": "ERR_VERSION_MISMATCH",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "version.controller-does-not-downgrade-silently",
+      "note": "The agent answers with a version the controller never offered. This is a protocol violation by the agent and the controller must abort rather than continue with an unrequested version.",
+      "controller_supported": ["1.1"],
+      "agent_supported": ["1.0"],
+      "agent_answered": "1.0",
+      "expected_negotiated": null,
+      "expected_error": "ERR_VERSION_MISMATCH",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "version.major-only-in-version-field",
+      "note": "The frame header's Version field carries the major number only, which is 1 for every 1.x release. The full version string travels in the HELLO body. A receiver must check the header field first and the body string second.",
+      "header_version_field": 1,
+      "hello_proto_string": "1.1",
+      "expected": "accepted",
+      "note_on_compatibility": "This is why minor versions can be added without changing the frame layout."
+    },
+    {
+      "id": "version.header-major-too-new",
+      "header_version_field": 2,
+      "expected_error": "ERR_VERSION_MISMATCH",
+      "expected_severity": "fatal"
+    },
+    {
+      "id": "version.additive-change-is-not-a-major-bump",
+      "note": "Adding a frame type, a capability name or an optional body key is an additive change. It must not bump the version, and an old peer must continue to work by ignoring what it does not know.",
+      "change_kind": "add_capability_and_message_type",
+      "expected_version_bump": false,
+      "old_peer_behaviour": "ignore_unknown_key_and_answer_ERR_UNSUPPORTED_MESSAGE_for_an_unknown_type"
+    },
+    {
+      "id": "version.breaking-change-requires-major-bump",
+      "note": "Changing the meaning of an existing field, removing a field, or changing a default in a way that breaks an old peer requires a new major version and an RFC.",
+      "change_kind": "change_default_of_video_codec",
+      "expected_version_bump": true,
+      "required_documents": ["docs/rfc/RFC-0001-wire-protocol.md", "protocol/schema/video.schema.json", "protocol/vectors/framing-basic.json"]
+    }
+  ],
+  "ci_rules": [
+    {
+      "id": "ci.rfc-change-requires-vector-change",
+      "note": "A pull request that changes RFC-0001 or a schema without changing the vectors fails, because an unpinned wire change is exactly the drift the process exists to prevent.",
+      "watch": ["docs/rfc/RFC-0001-wire-protocol.md", "protocol/schema/**"],
+      "require_touch": ["protocol/vectors/**"]
+    },
+    {
+      "id": "ci.new-error-code-requires-registry-entry",
+      "note": "A vector may not refer to an error code that is absent from the RFC registry, so the registry, the schema enum and the vectors always agree.",
+      "watch": ["protocol/vectors/**"],
+      "require_registry": ["docs/rfc/RFC-0001-wire-protocol.md#62-error-codes", "protocol/schema/error.schema.json"]
+    },
+    {
+      "id": "ci.new-capability-requires-registry-entry",
+      "watch": ["protocol/vectors/**"],
+      "require_registry": ["docs/rfc/RFC-0001-wire-protocol.md#71-capability-names", "protocol/schema/capabilities.schema.json"]
+    }
+  ]
+}

@@ -13,7 +13,9 @@
     "commit": "cz",
     "release": "standard-version",
     "lint:md": "markdownlint-cli2 \"**/*.md\" \"#node_modules\" \"#**/build/**\"",
-    "test:protocol": "node protocol/tools/test-vectors/verify.mjs"
+    "check:registry": "node protocol/tools/registry-check.mjs",
+    "test:protocol": "node protocol/tools/test-vectors/verify.mjs",
+    "check": "npm run check:registry && npm run test:protocol"
   },
   "config": {
     "commitizen": {

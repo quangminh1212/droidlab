@@ -1,0 +1,736 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0004",
+  "protocol_version": "1.0",
+  "description": "The shell policy in executable form. Each case gives an executable, an argument vector, a policy context and the verdict an agent must produce. Both implementations load this file and must agree on every verdict, including the reason code. See RFC-0004 sections 2 and 3.",
+  "policy_contexts": {
+    "default": {
+      "shell_granted": true,
+      "allow_level": "read_only",
+      "allowed_rules": [
+        "sys.getprop",
+        "sys.dumpsys.cpuinfo",
+        "sys.dumpsys.meminfo",
+        "sys.dumpsys.battery",
+        "sys.dumpsys.window",
+        "sys.dumpsys.activity",
+        "sys.dumpsys.package",
+        "sys.pm.list",
+        "sys.pm.path",
+        "sys.wm.size",
+        "sys.wm.density",
+        "sys.settings.get",
+        "sys.ip",
+        "sys.netstat",
+        "sys.ps",
+        "sys.log.cat",
+        "sys.uptime",
+        "sys.date",
+        "sys.screencap"
+      ],
+      "denied_rules": [
+        "su",
+        "sudo",
+        "magisk",
+        "sh",
+        "bash",
+        "dash",
+        "busybox",
+        "rm",
+        "dd",
+        "mkfs",
+        "fstrim",
+        "reboot",
+        "shutdown",
+        "svc",
+        "stop",
+        "start"
+      ],
+      "allow_stdin": false,
+      "max_command_line_bytes": 4096
+    },
+    "app_control_grant": {
+      "shell_granted": true,
+      "allow_level": "read_write",
+      "allowed_rules": [
+        "sys.getprop",
+        "sys.dumpsys.window",
+        "sys.pm.list",
+        "sys.am.force-stop",
+        "sys.am.start",
+        "dev.settings.put",
+        "dev.wm.size",
+        "dev.pm.grant",
+        "dev.pm.revoke"
+      ],
+      "denied_rules": [
+        "su",
+        "sh",
+        "rm",
+        "reboot"
+      ],
+      "allow_stdin": false,
+      "max_command_line_bytes": 4096
+    },
+    "no_grant": {
+      "shell_granted": false,
+      "allow_level": "read_only",
+      "allowed_rules": [],
+      "denied_rules": [],
+      "allow_stdin": false,
+      "max_command_line_bytes": 4096
+    },
+    "mutating_grant": {
+      "shell_granted": true,
+      "allow_level": "read_write",
+      "allowed_rules": [
+        "sys.getprop",
+        "sys.pm.list",
+        "dev.settings.put",
+        "dev.wm.size",
+        "dev.pm.grant",
+        "dev.pm.revoke"
+      ],
+      "denied_rules": [
+        "su",
+        "sh",
+        "rm",
+        "reboot"
+      ],
+      "allow_stdin": false,
+      "max_command_line_bytes": 4096
+    }
+  },
+  "policy_context_notes": {
+    "allow_level": "read_only permits only rules that are not marked mutating; read_write also permits rules marked mutating. A mutating rule in a read_only context is not in the allow list for that context, which is why the verdict is not_in_allow_list rather than argument_rejected.",
+    "denied_rules": "Bare executable basenames. A deny entry always wins over an allow entry, and is checked before any rule matching."
+  },
+  "rules": [
+    {
+      "id": "sys.getprop",
+      "exe": "/system/bin/getprop",
+      "argv_prefix": [],
+      "max_args": 1,
+      "arg_patterns": [
+        "^[A-Za-z0-9._-]{1,64}$"
+      ],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.dumpsys.window",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "window"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.dumpsys.cpuinfo",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "cpuinfo"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.dumpsys.meminfo",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "meminfo"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.dumpsys.battery",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "battery"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.dumpsys.activity",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "activity"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.dumpsys.package",
+      "exe": "/system/bin/dumpsys",
+      "argv_prefix": [
+        "package"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.pm.path",
+      "exe": "/system/bin/pm",
+      "argv_prefix": [
+        "path"
+      ],
+      "max_args": 1,
+      "arg_patterns": [
+        "^[A-Za-z0-9._]{1,255}$"
+      ],
+      "timeout_ms": 15000
+    },
+    {
+      "id": "sys.wm.size",
+      "exe": "/system/bin/wm",
+      "argv_prefix": [
+        "size"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.wm.density",
+      "exe": "/system/bin/wm",
+      "argv_prefix": [
+        "density"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.settings.get",
+      "exe": "/system/bin/settings",
+      "argv_prefix": [
+        "get"
+      ],
+      "max_args": 2,
+      "arg_patterns": [
+        "^(system|secure|global)$",
+        "^[A-Za-z0-9._-]{1,128}$"
+      ],
+      "timeout_ms": 10000,
+      "mutating": false
+    },
+    {
+      "id": "sys.ip",
+      "exe": "/system/bin/ip",
+      "argv_prefix": [
+        "addr"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.netstat",
+      "exe": "/system/bin/netstat",
+      "argv_prefix": [],
+      "max_args": 1,
+      "arg_patterns": [
+        "^-[a-z]{0,4}$"
+      ],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.ps",
+      "exe": "/system/bin/ps",
+      "argv_prefix": [],
+      "max_args": 2,
+      "arg_patterns": [
+        "^-[A-Za-z]{0,3}$",
+        "^[A-Za-z0-9._]{1,64}$"
+      ],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.log.cat",
+      "exe": "/system/bin/logcat",
+      "argv_prefix": [
+        "-d"
+      ],
+      "max_args": 2,
+      "arg_patterns": [
+        "^[A-Za-z0-9._*:-]{1,64}$",
+        "^[A-Za-z0-9._*:-]{1,64}$"
+      ],
+      "timeout_ms": 10000
+    },
+    {
+      "id": "sys.uptime",
+      "exe": "/system/bin/uptime",
+      "argv_prefix": [],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.date",
+      "exe": "/system/bin/date",
+      "argv_prefix": [],
+      "max_args": 1,
+      "arg_patterns": [
+        "^\\+?[A-Za-z0-9%:./ -]{0,32}$"
+      ],
+      "timeout_ms": 5000
+    },
+    {
+      "id": "sys.screencap",
+      "exe": "/system/bin/screencap",
+      "argv_prefix": [
+        "-p"
+      ],
+      "max_args": 1,
+      "arg_patterns": [
+        "^/data/local/tmp/[A-Za-z0-9._-]{1,64}\\.png$"
+      ],
+      "timeout_ms": 15000
+    },
+    {
+      "id": "sys.am.force-stop",
+      "exe": "/system/bin/am",
+      "argv_prefix": [
+        "force-stop"
+      ],
+      "max_args": 1,
+      "arg_patterns": [
+        "^[A-Za-z0-9._]{1,255}$"
+      ],
+      "timeout_ms": 15000,
+      "mutating": true
+    },
+    {
+      "id": "sys.am.start",
+      "exe": "/system/bin/am",
+      "argv_prefix": [
+        "start",
+        "-n"
+      ],
+      "max_args": 1,
+      "arg_patterns": [
+        "^[A-Za-z0-9._/\\$]{1,255}$"
+      ],
+      "timeout_ms": 15000,
+      "mutating": true
+    },
+    {
+      "id": "sys.pm.list",
+      "exe": "/system/bin/pm",
+      "argv_prefix": [
+        "list"
+      ],
+      "max_args": 0,
+      "arg_patterns": [],
+      "timeout_ms": 15000
+    },
+    {
+      "id": "dev.pm.grant",
+      "exe": "/system/bin/pm",
+      "argv_prefix": [
+        "grant"
+      ],
+      "max_args": 2,
+      "arg_patterns": [
+        "^[A-Za-z0-9._]{1,255}$",
+        "^[A-Za-z0-9._]{1,255}$"
+      ],
+      "timeout_ms": 15000,
+      "mutating": true
+    },
+    {
+      "id": "dev.pm.revoke",
+      "exe": "/system/bin/pm",
+      "argv_prefix": [
+        "revoke"
+      ],
+      "max_args": 2,
+      "arg_patterns": [
+        "^[A-Za-z0-9._]{1,255}$",
+        "^[A-Za-z0-9._]{1,255}$"
+      ],
+      "timeout_ms": 15000,
+      "mutating": true
+    },
+    {
+      "id": "dev.wm.size",
+      "exe": "/system/bin/wm",
+      "argv_prefix": [
+        "size"
+      ],
+      "max_args": 2,
+      "arg_patterns": [
+        "^[0-9]{1,5}x[0-9]{1,5}$",
+        "^[0-9]{1,5}x[0-9]{1,5}$"
+      ],
+      "timeout_ms": 10000,
+      "mutating": true
+    },
+    {
+      "id": "dev.settings.put",
+      "exe": "/system/bin/settings",
+      "argv_prefix": [
+        "put"
+      ],
+      "max_args": 3,
+      "arg_patterns": [
+        "^(system|secure|global)$",
+        "^[A-Za-z0-9._-]{1,128}$",
+        "^[A-Za-z0-9._:/-]{0,256}$"
+      ],
+      "timeout_ms": 10000,
+      "mutating": true
+    }
+  ],
+  "cases": [
+    {
+      "id": "shell.allow.getprop-simple",
+      "context": "default",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "ro.build.version.sdk"
+      ],
+      "expected": "allowed",
+      "expected_rule": "sys.getprop"
+    },
+    {
+      "id": "shell.allow.dumpsys-window",
+      "context": "default",
+      "exe": "/system/bin/dumpsys",
+      "args": [
+        "window"
+      ],
+      "expected": "allowed",
+      "expected_rule": "sys.dumpsys.window"
+    },
+    {
+      "id": "shell.allow.am-force-stop",
+      "note": "force-stop is a mutating rule, so it runs only under a read_write grant. The same command line under `default` is pinned as rejected by shell.deny.mutating-rule-without-write-grant.",
+      "context": "app_control_grant",
+      "exe": "/system/bin/am",
+      "args": [
+        "force-stop",
+        "com.example.app"
+      ],
+      "expected": "allowed",
+      "expected_rule": "sys.am.force-stop"
+    },
+    {
+      "id": "shell.deny.mutating-rule-without-write-grant",
+      "note": "The level gate: force-stop is allow-listed for the app_control_grant context, but the same operator grant at read_only level must refuse it. This is why the mutation flag and the allow level are separate facts.",
+      "context": "default",
+      "exe": "/system/bin/am",
+      "args": [
+        "force-stop",
+        "com.example.app"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.shell-interpreter",
+      "note": "A shell is deny-listed, so this cannot execute even though rm would also be denied. The point is that no string is ever handed to an interpreter.",
+      "context": "default",
+      "exe": "/system/bin/sh",
+      "args": [
+        "-c",
+        "rm -rf /data/local/tmp/x"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "deny_listed"
+    },
+    {
+      "id": "shell.deny.absolute-rm",
+      "context": "default",
+      "exe": "/system/bin/rm",
+      "args": [
+        "-rf",
+        "/sdcard"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "deny_listed"
+    },
+    {
+      "id": "shell.deny.su",
+      "context": "default",
+      "exe": "/system/xbin/su",
+      "args": [
+        "-c",
+        "id"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "deny_listed"
+    },
+    {
+      "id": "shell.deny.reboot",
+      "context": "default",
+      "exe": "/system/bin/reboot",
+      "args": [],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "deny_listed"
+    },
+    {
+      "id": "shell.deny.unknown-binary",
+      "note": "A binary outside the vetted directories is rejected even when its name looks harmless.",
+      "context": "default",
+      "exe": "/data/local/tmp/payload",
+      "args": [],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.not-allow-listed",
+      "context": "default",
+      "exe": "/system/bin/getprop2",
+      "args": [
+        "a"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.argument-rejected",
+      "note": "The executable is allow-listed but the argument does not match the pattern. Note there is no metacharacter expansion happening: the argument is simply not accepted.",
+      "context": "default",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "ro.build.version;id"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "argument_rejected"
+    },
+    {
+      "id": "shell.deny.argv-prefix-mismatch",
+      "note": "argv_prefix must match literally at the front of the argument vector. A subtly different subcommand does not qualify.",
+      "context": "default",
+      "exe": "/system/bin/dumpsys",
+      "args": [
+        "window2"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.no-grant",
+      "note": "Even a fully allow-listed read-only command is refused when the operator has not enabled shell for this pairing.",
+      "context": "no_grant",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "ro.build.version.sdk"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_PERMISSION_DENIED",
+      "expected_reason": "denied_by_operator"
+    },
+    {
+      "id": "shell.deny.mutating-settings-without-write-grant",
+      "note": "A mutating rule is refused under a read-only grant, even though the executable itself is allow-listed for another context.",
+      "context": "default",
+      "exe": "/system/bin/settings",
+      "args": [
+        "put",
+        "system",
+        "screen_brightness",
+        "0"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.allow.settings-get-under-read-only",
+      "note": "The read half of the same binary is allowed under a read-only grant, so the split is by rule and not by executable.",
+      "context": "default",
+      "exe": "/system/bin/settings",
+      "args": [
+        "get",
+        "system",
+        "screen_brightness"
+      ],
+      "expected": "allowed",
+      "expected_rule": "sys.settings.get"
+    },
+    {
+      "id": "shell.allow.mutating-rule-with-write-grant",
+      "note": "The same command line that is refused under `default` succeeds here, because the operator raised the grant to read_write.",
+      "context": "app_control_grant",
+      "exe": "/system/bin/settings",
+      "args": [
+        "put",
+        "system",
+        "screen_brightness",
+        "0"
+      ],
+      "expected": "allowed",
+      "expected_rule": "dev.settings.put"
+    },
+    {
+      "id": "shell.deny.mutating-with-bad-key-name",
+      "note": "The key position has its own pattern; a value that would need quoting is not a legal key and is refused.",
+      "context": "mutating_grant",
+      "exe": "/system/bin/settings",
+      "args": [
+        "put",
+        "system",
+        "a b c",
+        "0"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "argument_rejected"
+    },
+    {
+      "id": "shell.deny.too-many-arguments",
+      "context": "default",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "argument_rejected"
+    },
+    {
+      "id": "shell.deny.command-line-too-long",
+      "context": "default",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "argument_rejected"
+    },
+    {
+      "id": "shell.deny.regex-bomb",
+      "note": "A pathological argument must be rejected in bounded time. The policy engine must not be vulnerable to catastrophic backtracking, and the length cap rejects this before a pattern is even applied.",
+      "context": "default",
+      "exe": "/system/bin/getprop",
+      "args": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "argument_rejected",
+      "max_decision_time_ms": 50
+    },
+    {
+      "id": "shell.deny.empty-executable",
+      "context": "default",
+      "exe": "",
+      "args": [],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.relative-path",
+      "note": "Only absolute paths to vetted directories are accepted, so the current working directory can never be used to smuggle in a binary.",
+      "context": "default",
+      "exe": "getprop",
+      "args": [
+        "a"
+      ],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    },
+    {
+      "id": "shell.deny.path-traversal",
+      "context": "default",
+      "exe": "/system/bin/../../data/local/tmp/payload",
+      "args": [],
+      "expected": "rejected",
+      "expected_error": "ERR_NOT_ALLOWED",
+      "expected_reason": "not_in_allow_list"
+    }
+  ],
+  "lifecycle_vectors": [
+    {
+      "id": "shell.grant-revoked-mid-session",
+      "note": "The grant is re-checked before every execution, so revoking it must stop the next command on an already-established session rather than only affecting new sessions.",
+      "sequence": [
+        {
+          "step": "execute",
+          "exe": "/system/bin/getprop",
+          "args": [
+            "ro.build.version.sdk"
+          ],
+          "expected": "allowed"
+        },
+        {
+          "step": "operator_revokes_shell_grant"
+        },
+        {
+          "step": "execute",
+          "exe": "/system/bin/getprop",
+          "args": [
+            "ro.build.version.sdk"
+          ],
+          "expected": "rejected",
+          "expected_error": "ERR_PERMISSION_DENIED"
+        }
+      ]
+    },
+    {
+      "id": "shell.rate-limit-after-repeated-rejections",
+      "note": "Twenty rejections within sixty seconds suspends shell for that pairing for five minutes and surfaces a notification on the device.",
+      "rejections_within_window": 20,
+      "window_s": 60,
+      "expected": "suspended",
+      "suspend_s": 300,
+      "expected_error": "ERR_PERMISSION_DENIED"
+    },
+    {
+      "id": "shell.output-truncated",
+      "note": "Output beyond the cap is truncated, the exit code is preserved and the truncated flag is set so the controller can report it rather than silently losing data.",
+      "output_bytes": 8388608,
+      "output_cap_bytes": 4194304,
+      "expected": "truncated",
+      "expected_flag": true
+    },
+    {
+      "id": "shell.timeout-kills-process-group",
+      "note": "A command that exceeds its deadline has its whole process group killed, which matters because a shell is never used and so there is no shell process to rely on for cleanup.",
+      "timeout_ms": 5000,
+      "expected_exit_code": 137,
+      "expected_truncated": true
+    },
+    {
+      "id": "shell.audit-log-contains-blocked",
+      "note": "Both executed and blocked commands appear in the device audit log, so an operator can see attempts as well as successes.",
+      "required_audit_fields": [
+        "timestamp",
+        "rule_id",
+        "exe",
+        "args",
+        "exit_code",
+        "controller_fingerprint",
+        "blocked"
+      ],
+      "min_retained_entries": 500
+    }
+  ]
+}

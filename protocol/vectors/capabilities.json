@@ -1,0 +1,157 @@
+{
+  "$schema": "./schema/framing.schema.json",
+  "spec": "RFC-0001",
+  "protocol_version": "1.0",
+  "description": "Capability and limit negotiation (RFC-0001 section 7). These vectors pin the intersection rule, the disable rule and the limit defaults, so that two implementations agree on what a session may do before a single command is sent.",
+  "capability_registry": [
+    "screen.mirror",
+    "screen.record",
+    "input.touch",
+    "input.key",
+    "input.text",
+    "input.gesture",
+    "clipboard.read",
+    "clipboard.write",
+    "shell.exec",
+    "file.read",
+    "file.write",
+    "log.stream",
+    "app.install",
+    "app.launch",
+    "device.info",
+    "adb.wireless",
+    "compression.deflate",
+    "telemetry.stats"
+  ],
+  "default_limits": {
+    "max_frame_bytes": 16777216,
+    "max_channels": 8,
+    "max_video_width": 1920,
+    "max_video_height": 1080,
+    "max_video_fps": 60,
+    "max_video_bitrate": 16000000,
+    "max_file_chunk": 262144,
+    "shell_timeout_ms": 30000,
+    "max_gesture_steps": 256,
+    "max_pending_handshakes": 4
+  },
+  "negotiation_vectors": [
+    {
+      "id": "negotiate.full-intersection",
+      "note": "Agent and controller both offer the same set. The negotiated set is that set.",
+      "agent_capabilities": ["screen.mirror", "input.touch", "input.key", "device.info"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror", "input.touch", "input.key", "device.info"],
+      "expected_negotiated": ["screen.mirror", "input.touch", "input.key", "device.info"]
+    },
+    {
+      "id": "negotiate.controller-subset",
+      "note": "A controller that offers fewer capabilities gets the intersection. A capability the controller never offered must never appear in the negotiated set, even though the agent supports it.",
+      "agent_capabilities": ["screen.mirror", "input.touch", "input.key", "device.info"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror"],
+      "expected_negotiated": ["screen.mirror"]
+    },
+    {
+      "id": "negotiate.agent-subset",
+      "note": "An old agent that implements fewer capabilities than the controller offers simply has fewer in the intersection; the controller must degrade, not fail.",
+      "agent_capabilities": ["screen.mirror", "device.info"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror", "input.touch", "input.key", "device.info"],
+      "expected_negotiated": ["screen.mirror", "device.info"]
+    },
+    {
+      "id": "negotiate.operator-disabled-wins-even-when-both-support-it",
+      "note": "A capability the operator turned off on the device must be absent from the negotiated set even though both sides implement and offer it. This is the rule that makes the device-side switch meaningful.",
+      "agent_capabilities": ["screen.mirror", "shell.exec", "input.touch"],
+      "agent_disabled": ["shell.exec"],
+      "controller_offered": ["screen.mirror", "shell.exec", "input.touch"],
+      "expected_negotiated": ["screen.mirror", "input.touch"]
+    },
+    {
+      "id": "negotiate.permission-not-granted-is-disabled",
+      "note": "A capability whose platform permission was not granted is reported in 'disabled', so the controller can offer the user a fix rather than an unexplained failure.",
+      "agent_capabilities": ["screen.mirror", "input.touch"],
+      "agent_disabled": ["screen.mirror"],
+      "disabled_reason": "MediaProjection permission not granted",
+      "controller_offered": ["screen.mirror", "input.touch"],
+      "expected_negotiated": ["input.touch"]
+    },
+    {
+      "id": "negotiate.empty-intersection",
+      "note": "A session with no shared capability is legal but useless. Both sides must still complete the handshake and report an empty set, because the device information and error channels must remain usable for diagnostics.",
+      "agent_capabilities": ["shell.exec"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror"],
+      "expected_negotiated": [],
+      "expected_error": null,
+      "note_on_error": "An empty negotiated set is not an error. An attempt to use a capability outside it is ERR_UNSUPPORTED_FEATURE."
+    },
+    {
+      "id": "negotiate.unknown-capability-name-ignored",
+      "note": "A capability name an implementation does not know must be ignored, both in the offer and in the answer. This is what allows a newer peer to advertise something new without breaking an older one.",
+      "agent_capabilities": ["screen.mirror", "future.capability.v2"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror", "future.capability.v2"],
+      "expected_negotiated": ["screen.mirror"],
+      "unknown_ignored": ["future.capability.v2"]
+    },
+    {
+      "id": "negotiate.duplicate-names-normalised",
+      "note": "A duplicated capability name is harmless; the negotiated list must contain it once.",
+      "agent_capabilities": ["screen.mirror", "screen.mirror", "input.touch"],
+      "agent_disabled": [],
+      "controller_offered": ["screen.mirror", "screen.mirror"],
+      "expected_negotiated": ["screen.mirror"]
+    }
+  ],
+  "limit_clamp_vectors": [
+    {
+      "id": "limits.video-clamp-to-agent-maximum",
+      "note": "The controller may ask for more than the agent allows; the agent clamps rather than refusing, and reports the clamped values so the UI can show what is actually happening.",
+      "requested": { "max_width": 2560, "max_height": 1440, "fps": 120 },
+      "agent_limits": { "max_video_width": 1920, "max_video_height": 1080, "max_video_fps": 60 },
+      "expected_applied": { "width": 1920, "height": 1080, "fps": 60 }
+    },
+    {
+      "id": "limits.video-clamp-to-screen-size",
+      "note": "Asking for more pixels than the screen has wastes bitrate, so the effective size is the smaller of the requested size and the screen size, preserving aspect ratio.",
+      "requested": { "max_width": 1920, "max_height": 1080 },
+      "screen": { "width": 1080, "height": 2400 },
+      "expected_applied": { "width": 486, "height": 1080 },
+      "note_on_rounding": "486 x 1080 preserves the 1080:2400 ratio to within one pixel and both dimensions are even, as H.264 requires."
+    },
+    {
+      "id": "limits.file-chunk-clamped",
+      "note": "A file chunk larger than max_file_chunk must be refused before allocation, not truncated silently.",
+      "requested_chunk": 4194304,
+      "agent_max_file_chunk": 262144,
+      "expected": "rejected",
+      "expected_error": "ERR_FRAME_TOO_LARGE"
+    },
+    {
+      "id": "limits.shell-timeout-clamped",
+      "note": "A command requesting a longer deadline than the agent allows runs with the agent's deadline, and the truncated flag is set if output was cut short.",
+      "requested_timeout_ms": 600000,
+      "agent_shell_timeout_ms": 30000,
+      "expected_applied_timeout_ms": 30000
+    }
+  ],
+  "direction_vectors": [
+    {
+      "id": "negotiate.controller-allocates-odd-channel-ids",
+      "note": "Channel ids are partitioned by parity so that the two sides can allocate concurrently without a race. The controller uses odd ids, the agent uses even ids.",
+      "controller_first": 1,
+      "agent_first": 2,
+      "expected_controller_sequence": [1, 3, 5, 7],
+      "expected_agent_sequence": [2, 4, 6, 8]
+    },
+    {
+      "id": "negotiate.channel-id-reuse-requires-close",
+      "note": "Reusing a channel id without closing it first is a state error, because the peer may still have queued frames addressed to the old channel.",
+      "open_channels": [0, 1],
+      "reopen_request": 1,
+      "expected_error": "ERR_BAD_STATE"
+    }
+  ]
+}
