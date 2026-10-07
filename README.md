@@ -46,8 +46,8 @@ tooling at it.
   over Wi-Fi, so IDEs, Gradle tasks, `uiautomator` and CI scripts work unchanged.
 - **Scoped shell, not a remote root shell** — an explicit, auditable allow-list of
   commands with per-argument validation. No shell interpreter is ever spawned.
-- **Files, clipboard logs** — scoped file transfer, clipboard sync and `logcat`
-  streaming, all inside the same authenticated session.
+- **Files, clipboard and logs** — scoped file transfer, clipboard sync and
+  `logcat` streaming, all inside the same authenticated session.
 - **Pairing by QR code** — no typing IP addresses, ports or codes.
 
 ---
