@@ -114,8 +114,21 @@
       "id": "aead.header-is-associated-data",
       "note": "The 24-byte header is authenticated as associated data, with body_length replaced by the plaintext length. A receiver must never accept a frame whose header was modified without the tag failing.",
       "aad_length": 24,
-      "aad_bytes": "444c575001011840030000019c0000019900000000",
-      "aad_note": "Bytes 20-23, the body length field, are the plaintext length rather than the ciphertext length, so that the authenticated string is the same on both sides."
+      "aad_bytes": "444c5750010118f000000003000003920000038e00000000",
+      "aad_decoded": {
+        "magic": "DLWP",
+        "version": 1,
+        "flags": 1,
+        "header_length": 24,
+        "message_type": 240,
+        "channel_id": 3,
+        "sequence_number": 914,
+        "acknowledgment": 910,
+        "body_length": 0
+      },
+      "aad_note": "Bytes 20-23, the body length field, are the plaintext length rather than the ciphertext length, so that the authenticated string is the same on both sides. Here the plaintext is empty, so that field is zero even though the frame's own body_length would be 28 (a 12-byte nonce plus a 16-byte tag).",
+      "aad_bytes_note": "This field is the header for framing.error.recoverable, whose header is also worked through byte by byte in framing-basic.json's body_layout_example: ERROR (0xF0) on channel 3, sequence 914, acknowledging 910. An earlier revision of this vector held a 21-byte string that declared aad_length 24: it had lost the 0x18 header_length byte and the 0xf0 message-type byte, so it decoded to channel_id 50331649 and a message_type of 0x40. The decoded fields are now recorded above and the vector verifier checks the length against aad_length, so the two cannot drift again."
+
     }
   ]
 }

@@ -869,6 +869,192 @@ function checkSession(file, doc) {
   }
 }
 
+/**
+ * Checks the session key schedule and AEAD vectors in crypto-session-keys.json.
+ *
+ * This file was previously unchecked, and a defect survived in it because of
+ * that: the aead.header-is-associated-data vector declared aad_length 24 while
+ * carrying a 21-byte hex string that decoded to a channel id of 50331649. A
+ * declared length that disagrees with the bytes beside it is the single most
+ * common way a hex vector rots, so it is checked mechanically for every hex
+ * field here rather than left to review.
+ */
+function checkCryptoKeys(file, doc) {
+  const vectors = Array.isArray(doc.vectors) ? doc.vectors : [];
+  const aead = Array.isArray(doc.aead_vectors) ? doc.aead_vectors : [];
+
+  // Every <name>_hex field must decode to exactly the number of bytes its
+  // companion length field declares, or to the width its own name implies.
+  const hexWidths = {
+    salt_hex: null,
+    ikm_hex: 64,
+  };
+
+  for (const vector of vectors) {
+    const id = vector.id ?? '(unnamed)';
+    const derived = vector.derived ?? {};
+
+    for (const [field, expected] of Object.entries(hexWidths)) {
+      const value = derived[field];
+      if (typeof value !== 'string') continue;
+
+      if (!isHex(value)) {
+        fail(file, id, `${field} is not a valid hex string`);
+        continue;
+      }
+
+      if (expected !== null && hexBytes(value).length !== expected) {
+        fail(
+          file,
+          id,
+          `${field} declares ${hexBytes(value).length} bytes but the schedule requires ${expected}`,
+        );
+        continue;
+      }
+
+      ok(`${id}: ${field} is ${hexBytes(value).length} bytes as declared`);
+    }
+
+    // The salt must be the label, a separator, then the session id.
+    if (typeof derived.salt_hex === 'string' && isHex(derived.salt_hex)) {
+      const salt = Buffer.from(derived.salt_hex, 'hex');
+      const label = Buffer.from('DLWP/1-session', 'ascii');
+      const sessionId = Buffer.from(vector.inputs?.session_id ?? '', 'base64url');
+
+      const expectedSalt = Buffer.concat([label, Buffer.from([0]), sessionId]);
+
+      if (!salt.equals(expectedSalt)) {
+        fail(
+          file,
+          id,
+          `salt_hex is not "DLWP/1-session" || 0x00 || session_id ` +
+            `(expected ${expectedSalt.toString('hex')}, got ${derived.salt_hex})`,
+        );
+      } else {
+        ok(`${id}: salt is the label, a separator, then the session id`);
+      }
+    }
+
+    // The input keying material must be shared || pairing_secret.
+    if (typeof derived.ikm_hex === 'string' && isHex(derived.ikm_hex)) {
+      const expectedIkm = (vector.inputs?.shared ?? '') + (vector.inputs?.pairing_secret ?? '');
+      if (derived.ikm_hex !== expectedIkm) {
+        fail(file, id, 'ikm_hex is not shared || pairing_secret');
+      } else {
+        ok(`${id}: input keying material is shared || pairing_secret`);
+      }
+    }
+
+    // A vector that declares expected lengths must declare the ones the
+    // schedule produces, so a renamed or dropped output is caught here.
+    if (derived.expected_lengths) {
+      const required = ['c2a_key', 'a2c_key', 'c2a_iv', 'a2c_iv', 'exporter'];
+      const declared = Object.keys(derived.expected_lengths);
+      const missing = required.filter((name) => !declared.includes(name));
+
+      if (missing.length > 0) {
+        fail(file, id, `expected_lengths is missing ${missing.join(', ')}`);
+      } else {
+        ok(`${id}: expected_lengths covers every derived output`);
+      }
+    }
+  }
+
+  for (const vector of aead) {
+    const id = vector.id ?? '(unnamed)';
+
+    // A declared length must match the bytes it describes. This is the check
+    // that the broken AAD vector failed.
+    if (typeof vector.aad_bytes === 'string') {
+      if (!isHex(vector.aad_bytes)) {
+        fail(file, id, 'aad_bytes is not a valid hex string');
+        continue;
+      }
+
+      const actual = hexBytes(vector.aad_bytes).length;
+      const declared = vector.aad_length;
+
+      if (declared !== undefined && actual !== declared) {
+        fail(
+          file,
+          id,
+          `aad_bytes is ${actual} bytes but aad_length declares ${declared}`,
+        );
+        continue;
+      }
+
+      // A DLWP/1 associated data string is exactly one frame header.
+      if (actual !== 24) {
+        fail(file, id, `aad_bytes must be 24 bytes (one frame header), got ${actual}`);
+        continue;
+      }
+
+      // It must decode as a plausible header, and any recorded decoding must
+      // agree with it field for field.
+      const decoded = decodeHeader(vector.aad_bytes);
+      if (decoded.magic !== 'DLWP') {
+        fail(file, id, `aad_bytes does not begin with the DLWP magic (got "${decoded.magic}")`);
+        continue;
+      }
+
+      if (decoded.header_length !== 24) {
+        fail(file, id, `aad_bytes declares header_length ${decoded.header_length}, expected 24`);
+        continue;
+      }
+
+      if (vector.aad_decoded) {
+        let mismatch = null;
+        for (const [key, value] of Object.entries(vector.aad_decoded)) {
+          if (decoded[key] !== value) {
+            mismatch = `${key}: recorded ${JSON.stringify(value)}, bytes encode ${JSON.stringify(decoded[key])}`;
+            break;
+          }
+        }
+
+        if (mismatch) {
+          fail(file, id, `aad_decoded disagrees with aad_bytes (${mismatch})`);
+          continue;
+        }
+
+        ok(`${id}: aad_decoded agrees with the bytes field for field`);
+      }
+
+      ok(`${id}: aad_bytes is a valid 24-byte header`);
+    }
+
+    if (typeof vector.expected_nonce_hex === 'string') {
+      if (!isHex(vector.expected_nonce_hex)) {
+        fail(file, id, 'expected_nonce_hex is not a valid hex string');
+        continue;
+      }
+
+      const nonce = hexBytes(vector.expected_nonce_hex);
+      if (nonce.length !== 12) {
+        fail(file, id, `expected_nonce_hex is ${nonce.length} bytes, expected 12`);
+        continue;
+      }
+
+      // The layout is iv_prefix(4) || sequence(u64 big-endian).
+      const prefix = vector.c2a_iv;
+      if (typeof prefix === 'string' && isHex(prefix)) {
+        const expectedHex = (
+          prefix + BigInt(vector.sequence_number).toString(16).padStart(16, '0')
+        ).toLowerCase();
+
+        if (vector.expected_nonce_hex.toLowerCase() !== expectedHex) {
+          fail(
+            file,
+            id,
+            `expected_nonce_hex is not iv_prefix || sequence_be (expected ${expectedHex})`,
+          );
+        } else {
+          ok(`${id}: nonce is the prefix followed by the big-endian sequence number`);
+        }
+      }
+    }
+  }
+}
+
 function checkVersionNegotiation(file, doc) {
   const vectors = Array.isArray(doc.vectors) ? doc.vectors : [];
 
@@ -915,7 +1101,7 @@ const CHECKERS = {
   'session-basic.json': checkSession,
   'version-negotiation.json': checkVersionNegotiation,
   'crypto-primitives.json': null,
-  'crypto-session-keys.json': null,
+  'crypto-session-keys.json': checkCryptoKeys,
 };
 
 let fileCount = 0;
