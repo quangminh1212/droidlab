@@ -43,6 +43,20 @@ function hex(text) {
   return Buffer.from(text, 'hex');
 }
 
+/**
+ * Decodes unpadded base64url.
+ *
+ * The vectors use base64 for opaque payloads and base64url without padding for key material,
+ * nonces and identifiers, and the two are different alphabets. Decoding one as the other
+ * produces bytes that decode without complaint and are simply wrong, so they are kept apart.
+ */
+function b64url(text) {
+  if (typeof text !== 'string' || /[+/=]/.test(text)) {
+    throw new Error(`not valid unpadded base64url: ${String(text).slice(0, 40)}`);
+  }
+  return Buffer.from(text, 'base64url');
+}
+
 const problems = [];
 const checks = [];
 
@@ -958,6 +972,265 @@ function classifyBytes(bytes, context = {}) {
 
   // The window the Kotlin declares must be the one the vectors bracket.
   expect(REORDER_WINDOW === 32, 'the reorder window is 32');
+}
+
+// ---------------------------------------------------------------------------
+// HandshakeTranscript  --  mirror of HandshakeTranscript.kt
+// ---------------------------------------------------------------------------
+
+const TRANSCRIPT_LABEL = 'DLWP/1-handshake';
+const TRANSCRIPT_LABEL_LENGTH = 16;
+const NONCE_LENGTH = 32;
+const PUBLIC_KEY_LENGTH = 32;
+const TRANSCRIPT_MINIMUM_LENGTH = 153;
+
+/** Mirror of HandshakeTranscript.build. */
+function buildTranscript(clientId, agentId, clientNonce, agentNonce, clientPub, agentPub) {
+  const clientIdBytes = Buffer.from(clientId, 'utf8');
+  const agentIdBytes = Buffer.from(agentId, 'utf8');
+
+  if (clientIdBytes.length > 0xffff) throw new RangeError('client_id is too long');
+  if (agentIdBytes.length > 0xffff) throw new RangeError('agent_id is too long');
+
+  // Fixed widths are checked rather than truncated: a 31-byte nonce would shift every field
+  // after it, producing a transcript of the right length describing the wrong values.
+  for (const [value, expected, name] of [
+    [clientNonce, NONCE_LENGTH, 'client_nonce'],
+    [agentNonce, NONCE_LENGTH, 'agent_nonce'],
+    [clientPub, PUBLIC_KEY_LENGTH, 'client_pub'],
+    [agentPub, PUBLIC_KEY_LENGTH, 'agent_pub'],
+  ]) {
+    if (value.length !== expected) {
+      throw new RangeError(`${name} is ${value.length} bytes but the format fixes it at ${expected}`);
+    }
+  }
+
+  const clientPrefix = Buffer.alloc(2);
+  clientPrefix.writeUInt16BE(clientIdBytes.length);
+  const agentPrefix = Buffer.alloc(2);
+  agentPrefix.writeUInt16BE(agentIdBytes.length);
+
+  return Buffer.concat([
+    Buffer.from(TRANSCRIPT_LABEL, 'ascii'),
+    Buffer.from([0]),
+    clientPrefix,
+    clientIdBytes,
+    Buffer.from([0]),
+    agentPrefix,
+    agentIdBytes,
+    Buffer.from([0]),
+    clientNonce,
+    agentNonce,
+    clientPub,
+    agentPub,
+  ]);
+}
+
+/** Mirror of HandshakeTranscript.length. */
+function transcriptLength(clientId, agentId) {
+  return TRANSCRIPT_LABEL_LENGTH + 1 + 2 + Buffer.from(clientId, 'utf8').length + 1 +
+    2 + Buffer.from(agentId, 'utf8').length + 1 +
+    (NONCE_LENGTH * 2) + (PUBLIC_KEY_LENGTH * 2);
+}
+
+// ---- a minimal SHA-256, so the mirror does not need a dependency -----------------
+// Written out because this project's checkers are dependency-free by policy: `npm ci`
+// installs nothing, and adding a hash library to verify a hash would be circular.
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
+function sha256(input) {
+  const bytes = Buffer.from(input);
+  const h = [
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  ];
+
+  const bitLength = bytes.length * 8;
+  const padded = Buffer.alloc(Math.ceil((bytes.length + 9) / 64) * 64);
+
+  bytes.copy(padded);
+  padded[bytes.length] = 0x80;
+  padded.writeUInt32BE(Math.floor(bitLength / 0x100000000), padded.length - 8);
+  padded.writeUInt32BE(bitLength >>> 0, padded.length - 4);
+
+  const w = new Array(64);
+  const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;
+
+  for (let offset = 0; offset < padded.length; offset += 64) {
+    for (let i = 0; i < 16; i++) w[i] = padded.readUInt32BE(offset + i * 4);
+
+    for (let i = 16; i < 64; i++) {
+      const s0 = (rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >>> 3)) >>> 0;
+      const s1 = (rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >>> 10)) >>> 0;
+      w[i] = (w[i - 16] + s0 + w[i - 7] + s1) >>> 0;
+    }
+
+    let [a, b, c, d, e, f, g, hh] = h;
+
+    for (let i = 0; i < 64; i++) {
+      const S1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;
+      const ch = ((e & f) ^ (~e & g)) >>> 0;
+      const temp1 = (hh + S1 + ch + SHA256_K[i] + w[i]) >>> 0;
+      const S0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;
+      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+      const temp2 = (S0 + maj) >>> 0;
+
+      hh = g; g = f; f = e;
+      e = (d + temp1) >>> 0;
+      d = c; c = b; b = a;
+      a = (temp1 + temp2) >>> 0;
+    }
+
+    h[0] = (h[0] + a) >>> 0; h[1] = (h[1] + b) >>> 0;
+    h[2] = (h[2] + c) >>> 0; h[3] = (h[3] + d) >>> 0;
+    h[4] = (h[4] + e) >>> 0; h[5] = (h[5] + f) >>> 0;
+    h[6] = (h[6] + g) >>> 0; h[7] = (h[7] + hh) >>> 0;
+  }
+
+  return Buffer.from(h.flatMap((x) => [x >>> 24 & 0xff, x >>> 16 & 0xff, x >>> 8 & 0xff, x & 0xff]));
+}
+
+// ---- HandshakeTranscriptTest.everyVectorProducesItsDeclaredBytes ----------------
+{
+  const transcript = load('handshake-transcript.json');
+  const vectors = transcript.vectors || [];
+  expect(vectors.length >= 2, `handshake-transcript.json declares at least 2 vectors (found ${vectors.length})`);
+
+  for (const v of vectors) {
+    const inputs = v.inputs;
+    const expected = v.expected;
+
+    const built = buildTranscript(
+      inputs.client_id,
+      inputs.agent_id,
+      b64url(inputs.client_nonce),
+      b64url(inputs.agent_nonce),
+      b64url(inputs.client_pub),
+      b64url(inputs.agent_pub),
+    );
+
+    const declared = hex(expected.transcript_bytes);
+    expect(built.equals(declared), `${v.id} produces its declared bytes`);
+    expect(built.length === expected.transcript_length_bytes, `${v.id} declared length matches its bytes`);
+    expect(transcriptLength(inputs.client_id, inputs.agent_id) === built.length, `${v.id} length function agrees`);
+
+    // The hash is checked against the VECTOR's own bytes, not the implementation's output: a
+    // test that hashed its own transcript would pass even if both were wrong the same way.
+    const hashedDeclared = sha256(declared);
+    expect(
+      hashedDeclared.equals(hex(expected.transcript_sha256)),
+      `${v.id} declared hash is the SHA-256 of its declared bytes`,
+    );
+
+    expect(
+      sha256(built).equals(hex(expected.transcript_sha256)),
+      `${v.id} built transcript hashes to the declared hash`,
+    );
+
+    // The declared length prefixes, which are the parts that stop the collision.
+    const clientPrefix = built.subarray(17, 19).toString('hex');
+    expect(clientPrefix === expected.client_id_length_prefix, `${v.id} client_id length prefix`);
+
+    const clientIdLength = built.readUInt16BE(17);
+    const agentPrefixAt = 17 + 2 + clientIdLength + 1;
+    expect(
+      built.subarray(agentPrefixAt, agentPrefixAt + 2).toString('hex') === expected.agent_id_length_prefix,
+      `${v.id} agent_id length prefix`,
+    );
+  }
+}
+
+// ---- HandshakeTranscriptTest.aLengthPrefixPreventsAnIdentifierCollision ---------
+{
+  const transcript = load('handshake-transcript.json');
+  const minimum = transcript.vectors.find((v) => v.id === 'transcript.minimum-length');
+  const rejection = transcript.rejection_vectors.find(
+    (v) => v.id === 'transcript.reject.leading-separator-confusion',
+  );
+
+  expect(!!minimum, 'transcript.minimum-length exists');
+  expect(!!rejection, 'transcript.reject.leading-separator-confusion exists');
+
+  if (minimum && rejection) {
+    // The collision the length prefixes prevent: without them, client_id="c" with
+    // agent_id="a" describes the same split as client_id="c\x00a" with an empty agent_id.
+    expect(minimum.inputs.client_id === 'c', "the floor vector's client_id is one character");
+    expect(minimum.inputs.agent_id === 'a', "the floor vector's agent_id is one character");
+    expect(rejection.inputs.client_id === 'c\u0000a', 'the collision vector nests a separator in the client_id');
+    expect(rejection.inputs.agent_id === '', 'the collision vector has an empty agent_id');
+
+    const build = (v) => buildTranscript(
+      v.inputs.client_id,
+      v.inputs.agent_id,
+      b64url(v.inputs.client_nonce),
+      b64url(v.inputs.agent_nonce),
+      b64url(v.inputs.client_pub),
+      b64url(v.inputs.agent_pub),
+    );
+
+    const minimumBytes = build(minimum);
+    const rejectionBytes = build(rejection);
+
+    expect(!minimumBytes.equals(rejectionBytes), 'the two identifier splits produce distinct transcripts');
+    expect(rejectionBytes.length === rejection.expected.transcript_length_bytes, "the collision vector's declared length");
+    expect(rejectionBytes.length === minimumBytes.length + 1, 'the collision vector is exactly one byte longer');
+
+    expect(minimumBytes.length === 153, 'the floor is 153 bytes');
+    expect(minimumBytes.length === TRANSCRIPT_MINIMUM_LENGTH, 'MINIMUM_LENGTH matches the shortest vector');
+    expect(16 + 1 + 3 + 1 + 3 + 1 + 128 === 153, "the file's arithmetic evaluates to 153");
+
+    // The difference is the PREFIX, not the label or the separators, and it is worth pinning
+    // the exact bytes because the vector's own note describes the mechanism as a collision
+    // that would occur without prefixes. It is really a divergence at the prefix:
+    //
+    //   floor    : 00 01 "c"      00 00 01 "a" 00 ...
+    //   rejection: 00 03 "c\x00a" 00 00 00 ""  00 ...
+    //
+    // The rejection vector's agent_id prefix is 0x0000 -- a present, zero-length field --
+    // where a form that omitted an empty identifier entirely would have nothing there. That
+    // present-but-empty prefix is what keeps the two distinct, and it is why the format
+    // states the prefix as two bytes rather than as "the identifier's bytes".
+    //
+    // Stated this way rather than as "the naive form collides" because the naive forms do
+    // not, in fact, collide: concatenating the two identifiers with or without separating
+    // zero bytes gives distinct byte strings for these inputs. The prefix is doing real
+    // work, but the work is stating a length, not resolving an ambiguity that a
+    // concatenation would otherwise have.
+    const clientPrefixAt = TRANSCRIPT_LABEL_LENGTH + 1;
+
+    expect(
+      minimumBytes.subarray(clientPrefixAt, clientPrefixAt + 2).toString('hex') === '0001',
+      "the floor vector's client_id prefix is 1",
+    );
+
+    expect(
+      rejectionBytes.subarray(clientPrefixAt, clientPrefixAt + 2).toString('hex') === '0003',
+      "the rejection vector's client_id prefix is 3",
+    );
+
+    const rejectionAgentPrefixAt = clientPrefixAt + 2 + 3 + 1;
+
+    expect(
+      rejectionBytes.subarray(rejectionAgentPrefixAt, rejectionAgentPrefixAt + 2).toString('hex') === '0000',
+      "the rejection vector's agent_id prefix is 0 and is present",
+    );
+
+    // And the two diverge at the prefix itself, the earliest point they could.
+    expect(
+      minimumBytes[clientPrefixAt] !== rejectionBytes[clientPrefixAt] ||
+        minimumBytes[clientPrefixAt + 1] !== rejectionBytes[clientPrefixAt + 1],
+      'the two transcripts differ at the client_id length prefix',
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
