@@ -61,6 +61,36 @@ sealed interface CborValue {
 }
 
 /**
+ * The one entry point the classifier needs into the cbOR reader.
+ *
+ * A named object rather than a direct call to `CborReader` from the classifier, because the
+ * classifier's question is narrow -- "may this body be handed to a per-message parser?" --
+ * and giving it the reader would also give it the ability to parse bodies, which is the
+ * message layer's job and not the frame layer's. The layer model in the RFC keeps those
+ * apart for the same reason it keeps L1 free of policy.
+ */
+object CborBody {
+    /**
+     * Whether a body is a well-formed cbOR map.
+     *
+     * @param body the body bytes.
+     * @return whether it decodes as a map.
+     *
+     * An empty body is accepted, and that is a rule rather than a convenience: section 3.2
+     * makes zero bytes the canonical encoding of a message with no parameters, so a receiver
+     * that rejected it would refuse every parameterless message. `0xA0` is accepted too,
+     * because a sender that encodes the empty map explicitly is not wrong.
+     *
+     * Everything else DLWP/1 does not use is refused: indefinite lengths, tags, 64-bit
+     * arguments, floats, invalid UTF-8 and non-shortest integer encodings. The last of those
+     * matters most for interoperability, because two encoders that disagree about the
+     * shortest form produce different bytes for the same message, and a transcript hash over
+     * those bytes would not match.
+     */
+    fun isWellFormedMap(body: ByteArray): Boolean = CborReader.isWellFormedMap(body)
+}
+
+/**
  * Why a body could not be decoded.
  *
  * @property reason a stable machine-readable reason.
