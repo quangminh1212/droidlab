@@ -752,27 +752,143 @@ public sealed class ShellPolicyTests
         Assert.True(reachable > 0, "no rule can ever be reached, so the allow list is inert");
     }
 
-    // ---- Lifecycle: rate limiting and output handling ---------------------
+    // ---- Lifecycle: rate limiting, output handling and the audit log -------
 
-    /// <summary>Twenty rejections in a minute suspends shell for five minutes.</summary>
+    /// <summary>
+    /// Revocation stops the next command on an already-established session.
+    /// </summary>
+    /// <remarks>
+    /// The grant is re-checked before every command rather than once per session, so
+    /// revoking it takes effect immediately. This is the vector's own sequence, played
+    /// in order: allowed, the operator revokes, rejected.
+    /// </remarks>
+    [Fact]
+    public void RevocationStopsTheNextCommandOnALiveSession()
+    {
+        JsonElement vector = LifecycleVectors()
+            .First(v => v.GetProperty("id").GetString() == "shell.grant-revoked-mid-session");
+
+        JsonElement[] sequence = [.. vector.GetProperty("sequence").EnumerateArray()];
+        Assert.Equal(3, sequence.Length);
+
+        // The first step names the command that is allowed, and the expectation is
+        // read from the file rather than restated.
+        JsonElement first = sequence[0];
+        Assert.Equal("execute", first.GetProperty("step").GetString());
+        Assert.Equal("allowed", first.GetProperty("expected").GetString());
+
+        Assert.Equal("operator_revokes_shell_grant", sequence[1].GetProperty("step").GetString());
+
+        JsonElement third = sequence[2];
+        Assert.Equal("rejected", third.GetProperty("expected").GetString());
+        Assert.Equal("ERR_PERMISSION_DENIED", third.GetProperty("expected_error").GetString());
+
+        // Now the behaviour: the same command, under the two grants, really does
+        // produce those two verdicts.
+        ShellPolicyContext granted = Contexts["default"];
+        ShellPolicyContext revoked = Contexts["no_grant"];
+
+        ShellVerdict allowed = Evaluate(first, granted);
+        ShellVerdict refused = Evaluate(third, revoked);
+
+        Assert.True(allowed.Allowed, allowed.Reason);
+        Assert.False(refused.Allowed);
+        Assert.Equal(ErrorCodes.PermissionDenied, refused.Error);
+    }
+
+    /// <summary>Twenty refusals in a minute suspend shell, and the suspension expires.</summary>
+    /// <remarks>
+    /// <para>
+    /// The suspension is <i>shell</i> being unavailable rather than the session being
+    /// ended, so the code a suspended peer sees is the same one a refusal uses. That is
+    /// deliberate: the count left before suspension is a scheduling hint for an
+    /// attacker, and the operator's remedy is the same either way.
+    /// </para>
+    /// <para>
+    /// The window is checked at both ends. A count that never expired would suspend a
+    /// session that was only occasionally refused, and one that never triggered would
+    /// let a peer probe without limit.
+    /// </para>
+    /// </remarks>
     [Fact]
     public void RepeatedRejectionsSuspendShell()
     {
         JsonElement vector = LifecycleVectors()
             .First(v => v.GetProperty("id").GetString() == "shell.rate-limit-after-repeated-rejections");
 
-        Assert.Equal(20, vector.GetProperty("rejections_within_window").GetInt32());
-        Assert.Equal(60, vector.GetProperty("window_s").GetInt32());
-        Assert.Equal("suspended", vector.GetProperty("expected").GetString());
-        Assert.Equal(300, vector.GetProperty("suspend_s").GetInt32());
-        Assert.Equal(ErrorCodes.PermissionDenied, ErrorCodes.PermissionDenied);
+        int threshold = vector.GetProperty("rejections_within_window").GetInt32();
+        int windowMs = vector.GetProperty("window_s").GetInt32() * 1000;
+        int suspendMs = vector.GetProperty("suspend_s").GetInt32() * 1000;
+
+        Assert.Equal(ShellSession.SuspensionThreshold, threshold);
+        Assert.Equal(ShellSession.SuspensionDurationSeconds * 1000, suspendMs);
+
+        ShellSession session = new("9F3C-1A08-B7E2-44D1");
+        ShellVerdict refused = new(false, null, ShellRejection.DenyListed, ErrorCodes.PermissionDenied);
+
+        long now = 1_000_000;
+
+        // One short of the threshold is not enough to suspend, counted with the
+        // refusals spread across the window.
+        for (int i = 0; i < threshold - 1; i++)
+        {
+            session.Submit(refused, "/system/bin/getprop", ["x"], now + (i * (windowMs / threshold)));
+        }
+
+        Assert.False(session.IsSuspended(now + windowMs - 1));
+
+        // The threshold one does suspend.
+        session.Submit(refused, "/system/bin/getprop", ["x"], now + windowMs - 1);
+
+        Assert.True(session.IsSuspended(now + windowMs));
+
+        // And the suspension expires rather than lasting forever.
+        Assert.False(session.IsSuspended(now + windowMs + suspendMs));
+
+        // A suspended session refuses even a command the policy allowed.
+        ShellSession fresh = new("9F3C-1A08-B7E2-44D1");
+        long t = 0;
+
+        for (int i = 0; i < threshold; i++)
+        {
+            fresh.Submit(refused, "/system/bin/getprop", ["x"], t);
+        }
+
+        ShellVerdict allowed = new(true, Policy.Rules.First(r => r.Id == "sys.getprop"), null, null);
+        ShellVerdict whileSuspended = fresh.Submit(allowed, "/system/bin/getprop", ["x"], t);
+
+        Assert.False(whileSuspended.Allowed);
+        Assert.Equal(ErrorCodes.PermissionDenied, whileSuspended.Error);
     }
 
-    /// <summary>Output beyond the cap is truncated and the flag is set.</summary>
+    /// <summary>Refusals older than the window do not count toward suspension.</summary>
     /// <remarks>
-    /// Truncated output with the exit code preserved and a flag set, so the
-    /// controller can report the loss rather than silently showing a partial
-    /// result as if it were complete.
+    /// The count is a rate, not a lifetime total. Twenty refusals spread over an hour
+    /// are a session being used with an occasionally wrong request; twenty in a minute
+    /// are a peer probing, and only the second should suspend.
+    /// </remarks>
+    [Fact]
+    public void OldRefusalsDoNotCountTowardSuspension()
+    {
+        ShellSession session = new("9F3C-1A08-B7E2-44D1");
+        ShellVerdict refused = new(false, null, ShellRejection.DenyListed, ErrorCodes.PermissionDenied);
+
+        long windowMs = ShellSession.SuspensionWindowSeconds * 1000L;
+
+        // Nineteen refusals, each one window apart: never twenty inside one window.
+        for (int i = 0; i < ShellSession.SuspensionThreshold - 1; i++)
+        {
+            session.Submit(refused, "/system/bin/getprop", ["x"], i * windowMs * 2);
+        }
+
+        Assert.False(session.IsSuspended((ShellSession.SuspensionThreshold - 1) * windowMs * 2));
+    }
+
+    /// <summary>The output cap truncates and says so, and the exit code survives.</summary>
+    /// <remarks>
+    /// A truncated result with its exit code and a flag lets the controller report
+    /// that the read is incomplete rather than presenting a partial listing as whole,
+    /// which for a package list would be actively misleading.
     /// </remarks>
     [Fact]
     public void OutputBeyondTheCapIsTruncatedAndFlagged()
@@ -783,15 +899,45 @@ public sealed class ShellPolicyTests
         int produced = vector.GetProperty("output_bytes").GetInt32();
         int cap = vector.GetProperty("output_cap_bytes").GetInt32();
 
+        Assert.Equal(ShellSession.OutputCapBytes, cap);
         Assert.True(produced > cap);
-        Assert.Equal("truncated", vector.GetProperty("expected").GetString());
-        Assert.True(vector.GetProperty("expected_flag").GetBoolean());
+
+        ShellSession session = new("9F3C-1A08-B7E2-44D1");
+
+        (int retained, bool truncated) = session.CapOutput(produced);
+
+        Assert.Equal(cap, retained);
+        Assert.True(truncated);
+        Assert.Equal(vector.GetProperty("expected_flag").GetBoolean(), truncated);
+
+        // Exactly at the cap is not truncated, which is the boundary the flag has to
+        // get right: off-by-one here loses data silently.
+        (int exact, bool exactTruncated) = session.CapOutput(cap);
+
+        Assert.Equal(cap, exact);
+        Assert.False(exactTruncated);
+
+        // Under the cap is untouched.
+        (int small, bool smallTruncated) = session.CapOutput(10);
+
+        Assert.Equal(10, small);
+        Assert.False(smallTruncated);
+
+        // The exit code is recorded independently of truncation: a command that
+        // succeeded and produced too much output succeeded.
+        session.Complete("/system/bin/pm", ["list", "packages"], exitCode: 0, truncated: true, nowMs: 5);
+
+        ShellAuditEntry entry = session.AuditLog.Last();
+        Assert.Equal(0, entry.ExitCode);
+        Assert.True(entry.Truncated);
     }
 
-    /// <summary>A timed-out command has its process group killed.</summary>
+    /// <summary>A timed-out command's whole process group is killed.</summary>
     /// <remarks>
-    /// The whole process group, because no shell is used and so there is no shell
-    /// process to rely on for cleanup. Exit code 137 is SIGKILL.
+    /// The exit code is 137 — SIGKILL as a POSIX shell reports it — and the process
+    /// group is what is signalled. That matters because no shell is used, so there is
+    /// no shell process whose exit would clean up the children: signalling only the
+    /// direct child would leave whatever it spawned running.
     /// </remarks>
     [Fact]
     public void TimedOutCommandIsKilledWithItsProcessGroup()
@@ -799,18 +945,33 @@ public sealed class ShellPolicyTests
         JsonElement vector = LifecycleVectors()
             .First(v => v.GetProperty("id").GetString() == "shell.timeout-kills-process-group");
 
-        Assert.Equal(137, vector.GetProperty("expected_exit_code").GetInt32());
+        int timeoutMs = vector.GetProperty("timeout_ms").GetInt32();
+        int expectedCode = vector.GetProperty("expected_exit_code").GetInt32();
+
+        Assert.Equal(ShellSession.TimeoutExitCode, expectedCode);
+
+        // Under the deadline there is no timeout code.
+        Assert.Null(ShellSession.ExitCodeForTimeout(timeoutMs - 1, timeoutMs));
+
+        // At the deadline and past it, the killed code is reported.
+        Assert.Equal(expectedCode, ShellSession.ExitCodeForTimeout(timeoutMs, timeoutMs));
+        Assert.Equal(expectedCode, ShellSession.ExitCodeForTimeout(timeoutMs * 10, timeoutMs));
+
+        // A timed-out command's captured output is necessarily incomplete, which the
+        // vector also declares.
         Assert.True(vector.GetProperty("expected_truncated").GetBoolean());
 
-        // The rule's own deadline is what bounds it.
+        // And the rule's own deadline is what bounds it rather than an arbitrary one.
         ShellRule rule = Policy.Rules.First(r => r.Id == "sys.getprop");
         Assert.True(rule.TimeoutMs > 0);
     }
 
     /// <summary>Blocked commands reach the audit log, not only executed ones.</summary>
     /// <remarks>
-    /// An operator needs to see attempts as well as successes; a log of
-    /// successes only would hide exactly the activity worth reviewing.
+    /// An operator needs to see attempts as well as successes. A log of successes
+    /// only would hide exactly the activity worth reviewing, which is a peer
+    /// repeatedly asking for something it is not allowed to have — and the very
+    /// refusals that suspend shell are the ones that would go unrecorded.
     /// </remarks>
     [Fact]
     public void AuditLogIncludesBlockedCommands()
@@ -821,9 +982,95 @@ public sealed class ShellPolicyTests
         IReadOnlyList<string> required = [.. vector.GetProperty("required_audit_fields").EnumerateArray()
             .Select(e => e.GetString()!)];
 
-        Assert.Contains("blocked", required);
-        Assert.Contains("controller_fingerprint", required);
-        Assert.Contains("rule_id", required);
+        // Every required field is one the entry type actually carries, which is what
+        // makes the vector checkable rather than aspirational.
+        Assert.Equal(
+            ["timestamp", "rule_id", "exe", "args", "exit_code", "controller_fingerprint", "blocked"],
+            required);
+
+        ShellSession session = new("9F3C-1A08-B7E2-44D1");
+
+        // One allowed and one blocked command, through the real policy.
+        ShellVerdict allowed = Policy.Evaluate(
+            Contexts["default"],
+            "/system/bin/getprop",
+            ["ro.build.version.sdk"]);
+
+        Assert.True(allowed.Allowed, allowed.Reason);
+
+        ShellVerdict blocked = Policy.Evaluate(
+            Contexts["app_control_grant"],
+            "/system/bin/rm",
+            ["-rf", "/data"]);
+
+        Assert.False(blocked.Allowed);
+
+        session.Submit(allowed, "/system/bin/getprop", ["ro.build.version.sdk"], nowMs: 1_000);
+        session.Submit(blocked, "/system/bin/rm", ["-rf", "/data"], nowMs: 2_000);
+
+        Assert.Equal(2, session.AuditLog.Count);
+
+        ShellAuditEntry executed = session.AuditLog.First();
+        ShellAuditEntry refused = session.AuditLog.Last();
+
+        Assert.False(executed.Blocked);
+        Assert.True(refused.Blocked);
+
+        // Every required field is populated on both, including the blocked one.
+        foreach (ShellAuditEntry entry in new[] { executed, refused })
+        {
+            Assert.True(entry.TimestampMs > 0);
+            Assert.False(string.IsNullOrEmpty(entry.Executable));
+            Assert.NotNull(entry.Arguments);
+            Assert.Equal("9F3C-1A08-B7E2-44D1", entry.ControllerFingerprint);
+            Assert.False(string.IsNullOrEmpty(entry.Reason));
+        }
+
+        // The blocked entry names what the peer asked for, which is the point of
+        // logging it: an operator reads the command that was attempted.
+        Assert.Equal("rm", Path.GetFileName(refused.Executable));
+        Assert.Contains("-rf", refused.Arguments);
+
         Assert.True(vector.GetProperty("min_retained_entries").GetInt32() >= 500);
+    }
+
+    /// <summary>The audit log is bounded, dropping the oldest first.</summary>
+    /// <remarks>
+    /// Bounded so a peer generating traffic cannot fill a device, and oldest-first so
+    /// the most recent activity — the part an incident review starts from — is what
+    /// survives.
+    /// </remarks>
+    [Fact]
+    public void TheAuditLogIsBoundedOldestFirst()
+    {
+        ShellSession session = new("9F3C-1A08-B7E2-44D1", maxAuditEntries: 3);
+        ShellVerdict allowed = new(true, Policy.Rules.First(r => r.Id == "sys.getprop"), null, null);
+
+        for (int i = 0; i < 10; i++)
+        {
+            session.Submit(allowed, "/system/bin/getprop", [$"arg{i}"], nowMs: i);
+        }
+
+        Assert.Equal(3, session.AuditLog.Count);
+
+        // The three most recent survive, in order.
+        Assert.Equal(["arg7", "arg8", "arg9"], session.AuditLog.Select(e => e.Arguments[0]));
+
+        // The default is the vector's minimum, so the two cannot drift.
+        Assert.True(new ShellSession("X").MaxAuditEntries >= ShellSession.MinimumRetainedAuditEntries);
+    }
+
+    /// <summary>
+    /// Evaluates one lifecycle sequence step against a context.
+    /// </summary>
+    /// <param name="step">The step.</param>
+    /// <param name="context">The context.</param>
+    /// <returns>The verdict.</returns>
+    private static ShellVerdict Evaluate(JsonElement step, ShellPolicyContext context)
+    {
+        string exe = step.GetProperty("exe").GetString()!;
+        List<string> args = [.. step.GetProperty("args").EnumerateArray().Select(e => e.GetString()!)];
+
+        return Policy.Evaluate(context, exe, args);
     }
 }
