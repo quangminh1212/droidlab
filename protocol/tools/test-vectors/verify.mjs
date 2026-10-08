@@ -90,6 +90,42 @@ function readU32(bytes, offset) {
   );
 }
 
+function beginFrameRuleCheck(header, registries, vector) {
+  // The order the receiver applies, as far as it can be decided from the header.
+  // Each check either fires, with the code it yields, or is skipped. The rules
+  // that need the message type's own registry entry (the state machine, the
+  // encryption flag, the capability gate and the body) are covered by the C#
+  // tests, which have the registry loaded as objects and so can express them
+  // without re-deriving anything here.
+  void vector;
+
+  const registeredCode = [...registries.messageTypes.values()].includes(header.message_type);
+
+  if (header.magic !== 'DLWP') {
+    return { rule: 'the magic check', code: 'ERR_MALFORMED' };
+  }
+  if (header.version !== 1) {
+    return { rule: 'the version check', code: 'ERR_VERSION_MISMATCH' };
+  }
+  if (header.header_length !== 24) {
+    return {
+      rule: 'the header-length check',
+      code: header.header_length === 0 ? 'ERR_MALFORMED' : 'ERR_UNSUPPORTED_HEADER',
+    };
+  }
+  if (header.body_length > 16_777_216) {
+    return { rule: 'the frame-size check', code: 'ERR_FRAME_TOO_LARGE' };
+  }
+  if (header.total_length < 24 + header.body_length) {
+    return { rule: 'the truncation check', code: null };
+  }
+  if (!registeredCode) {
+    return { rule: 'the message-type check', code: 'ERR_UNSUPPORTED_MESSAGE' };
+  }
+
+  return { rule: 'a later check', code: null };
+}
+
 function decodeHeader(frameHex) {
   const bytes = hexBytes(frameHex);
   if (bytes.length < 24) return null;
@@ -363,6 +399,8 @@ function checkFraming(file, doc) {
 
 function checkMalformed(file, doc) {
   const vectors = Array.isArray(doc.vectors) ? doc.vectors : [];
+  const registries = loadRegistries();
+
   for (const vector of vectors) {
     const id = vector.id ?? '(unnamed)';
     if (typeof vector.frame === 'string' && isHex(vector.frame)) {
@@ -370,10 +408,107 @@ function checkMalformed(file, doc) {
       if (header && header.total_length !== header.header_length + header.body_length) {
         // For malformed vectors a deliberate mismatch is allowed only when the
         // vector is about that mismatch. Everything else must still add up.
+        //
+        // frame-too-large is in the list because its whole point is a header
+        // that declares far more than it supplies: it is the case proving the
+        // size check runs before any attempt to read the body. That does not
+        // exempt it from the substantive check below, which is what the earlier
+        // exemption-shaped version of this got wrong.
         const aboutLength =
-          id.includes('body-length') || id.includes('frame-too-large') || id.includes('header-length');
+          id.includes('body-length') || id.includes('header-length') || id === 'malformed.frame-too-large';
         if (!aboutLength) {
           fail(file, id, 'declared body length does not match the frame contents, and the vector is not about that');
+        }
+      }
+
+      // The frame-too-large case is checked directly rather than exempted. An
+      // earlier revision of this file exempted it by id, and a real defect hid
+      // behind the exemption: the frame ended one byte short, so the declared
+      // body read 255 instead of 4294967295 and the case tested nothing about
+      // frame size at all. What matters here is checkable: the declared body
+      // length must exceed the protocol limit, so the vector cannot pass by
+      // declaring something small.
+      if (id === 'malformed.frame-too-large' && header) {
+        const defaults = loadRegistries().defaultLimits ?? {};
+        const limit = defaults.max_frame_bytes;
+        if (typeof limit === 'number' && header.body_length <= limit) {
+          fail(
+            file,
+            id,
+            `declares a ${header.body_length}-byte body, which is within the ${limit}-byte limit, ` +
+              'so this frame would not exercise the size check at all',
+          );
+        } else {
+          ok(`${id}: declares a body over the frame-size limit`);
+        }
+      }
+
+      // A bad-magic frame must actually have a bad magic, or it tests the wrong
+      // rule. The vector makes a point of this, so it is worth checking.
+      if (id === 'malformed.bad-magic' && header && header.magic === 'DLWP') {
+        fail(file, id, 'this vector is about a bad magic but the frame begins with the DLWP magic');
+      }
+
+      // A vector named for reserved bits must set some, and one named for an
+      // unknown message type must use a code the registry does not define. Both
+      // checks exist because both defects were real: the reserved-bit vector set
+      // no reserved bits, and a case claiming to test an unknown message type
+      // would be worthless if the code happened to be registered.
+      if (id.includes('reserved-flag-bits') && header) {
+        if ((header.flags & 0xf0) === 0) {
+          fail(file, id, 'this vector is about reserved flag bits but sets none of them');
+        } else {
+          ok(`${id}: reserved flag bits are actually set`);
+        }
+      }
+
+      if (id.includes('unknown-message-type') && header && registries.messageTypes) {
+        const known = [...registries.messageTypes.values()];
+        if (known.includes(header.message_type)) {
+          fail(
+            file,
+            id,
+            `this vector is about an unknown message type but ${header.message_type} is registered`,
+          );
+        } else {
+          ok(`${id}: message type ${header.message_type} is not registered`);
+        }
+      }
+
+      // A vector whose name states a field value must carry that value, and a
+      // vector that expects an error must actually reach that error. Both were
+      // real defects: header-length-zero carried 0x18 (24), the only value
+      // version 1.0 accepts, so it was byte-for-byte a frame that is fine; and a
+      // body case on an encrypted message type hit the encryption rule first and
+      // answered ERR_UNAUTHORIZED, leaving the cbOR rule it exists to test
+      // unreached. A vector that cannot reach its own error tests nothing.
+      if (header) {
+        const named = id.match(/header-length-(\d+)/);
+        if (named && header.header_length !== Number(named[1])) {
+          fail(
+            file,
+            id,
+            `names header length ${named[1]} but carries ${header.header_length}`,
+          );
+        } else if (named) {
+          ok(`${id}: header length is ${header.header_length} as the id says`);
+        }
+
+        // The declared error must be the first rule that applies to the frame,
+        // judged with the same order the receiver uses. Only the rules that can
+        // be decided from the header are checked here, which is enough to catch a
+        // case that is pre-empted by a rule earlier in the order.
+        if (typeof vector.expected_error === 'string') {
+          const first = beginFrameRuleCheck(header, registries, vector);
+          if (first.code && first.code !== vector.expected_error) {
+            fail(
+              file,
+              id,
+              `expects ${vector.expected_error}, but ${first.rule} applies first and yields ${first.code}`,
+            );
+          } else if (first.code) {
+            ok(`${id}: ${first.rule} is the first rule and yields ${first.code}`);
+          }
         }
       }
     }
@@ -385,6 +520,17 @@ function checkMalformed(file, doc) {
     }
     if (vector.expected_severity === 'fatal' && vector.expected === 'error_session_continues') {
       fail(file, id, 'severity fatal cannot leave the session running');
+    }
+  }
+
+  // A vector whose expected error is not in the registry names an error no
+  // implementation could report, so every one is checked against the registry.
+  if (registries.errorCodes) {
+    for (const vector of [...vectors, ...(doc.sequence_vectors ?? [])]) {
+      const code = vector.expected_error;
+      if (typeof code === 'string' && !registries.errorCodes.has(code)) {
+        fail(file, vector.id ?? '(unnamed)', `expects error '${code}', which is not in the registry`);
+      }
     }
   }
 }

@@ -7,7 +7,7 @@
     {
       "id": "malformed.bad-magic",
       "note": "The first four bytes must be ASCII 'DLWP'. Nothing may be parsed before the magic is checked.",
-      "frame": "444c58500100180500000000000000010000000000000003000000",
+      "frame": "444c58500100180500000000000000010000000000000000",
       "expected": "close_connection",
       "expected_error": "ERR_MALFORMED",
       "expected_severity": "fatal"
@@ -15,7 +15,7 @@
     {
       "id": "malformed.version-unsupported",
       "note": "A version the receiver does not implement. The receiver must not attempt a best-effort parse (RFC-0001 section 10).",
-      "frame": "444c57500200180500000000000000010000000000000003000000",
+      "frame": "444c57500200180500000000000000010000000000000000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_VERSION_MISMATCH",
       "expected_severity": "fatal"
@@ -23,7 +23,7 @@
     {
       "id": "malformed.header-length-25",
       "note": "Version 1.0 defines no header extensions, so any header_length other than 24 is rejected. A receiver must not try to skip the extension bytes.",
-      "frame": "444c57500101190500000000000000010000000000000000000000",
+      "frame": "444c57500101190500000000000000010000000000000000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_UNSUPPORTED_HEADER",
       "expected_severity": "fatal"
@@ -31,71 +31,79 @@
     {
       "id": "malformed.header-length-zero",
       "note": "A zero header_length would make the header shorter than its own fixed prefix. Reject before reading the body.",
-      "frame": "444c57500100180500000000000000010000000000000000000000",
+      "frame": "444c57500100000500000000000000010000000000000000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "header_length at offset 6 is 0x00, not the 0x18 (24) that an otherwise identical frame would carry. An earlier revision set 0x18, so the frame was byte-for-byte a frame that version 1.0 accepts and the case tested nothing: a receiver following the rules accepted it. A zero header_length makes the header shorter than its own fixed prefix, so the receiver must reject it as ERR_MALFORMED before reading anything that follows the length byte."
     },
     {
       "id": "malformed.frame-too-large",
       "note": "A declared body larger than max_frame_bytes must be rejected by reading the header only, without allocating the declared size. 0xFFFFFFFF is the worst case an attacker can request.",
-      "frame": "444c575001011832000000000000000100000000000000ffffffff",
+      "frame": "444c575001011832000000000000000100000000ffffffff",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_FRAME_TOO_LARGE",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Exactly 24 bytes: the fixed header and nothing else, so the body_length field at bytes 20-23 really is 0xFFFFFFFF and there is no body to read. An earlier revision ended one byte short, so the field read 0x000000ff and the trailing three bytes were a body: the frame declared 255 bytes and supplied 3, which a correct receiver answers with wait_for_more rather than ERR_FRAME_TOO_LARGE. The case tested nothing about frame size while appearing to. Being header-only is deliberate too: it is the one case that proves the size check runs before any attempt to read or allocate the body."
     },
     {
       "id": "malformed.body-not-cbor",
       "note": "The body begins with 0xFF, which is not a valid cbOR initial byte. A receiver must fail the frame rather than pass the bytes through to a per-message parser.",
-      "frame": "444c57500100180500000000000000010000000000000008000004ff00000000",
+      "frame": "444c57500100180100000000000000010000000000000005ff00000000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body ff00000000. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.cbor-indefinite-length-map",
       "note": "Indefinite-length encodings are forbidden so that a message has exactly one byte encoding (RFC-0001 section 3.2). 0xBF opens an indefinite map.",
-      "frame": "444c5750010018050000000000000001000000000000000d000006bf616161626201ff0000",
+      "frame": "444c5750010018010000000000000001000000000000000abf616161626201ff0000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body bf616161626201ff0000. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.cbor-non-shortest-integer",
       "note": "A value that fits one byte must be encoded in one byte. 0x18 0x05 encodes 5 in two bytes, which is non-canonical.",
-      "frame": "444c5750010018400000000000000001000000000000000a00000aa1617818050000",
+      "frame": "444c57500100180100000000000000010000000000000007a1617818050000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body a1617818050000. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.cbor-float",
       "note": "The protocol defines no floating-point fields, so every float encoding is rejected rather than coerced.",
-      "frame": "444c5750010018400000000000000001000000000000000b00000ca16178f97e000000",
+      "frame": "444c57500100180100000000000000010000000000000008a16178f97e000000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body a16178f97e000000. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.cbor-tag",
       "note": "Tags are unused. 0xC2 opens tag 2, the positive bignum tag, which an attacker can use to smuggle a large integer past a naive length check.",
-      "frame": "444c5750010018400000000000000001000000000000000b00000ba16178c2410a0000",
+      "frame": "444c57500100180100000000000000010000000000000008a16178c2410a0000",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body a16178c2410a0000. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.cbor-invalid-utf8",
       "note": "0xFF is not a legal UTF-8 byte. A text key containing it must not be decoded with a replacement character.",
-      "frame": "444c57500100180500000000000000010000000000000006000003a161ff",
+      "frame": "444c57500100180100000000000000010000000000000003a161ff",
       "expected": "error_frame_then_close",
       "expected_error": "ERR_MALFORMED",
-      "expected_severity": "fatal"
+      "expected_severity": "fatal",
+      "frame_note": "Message type 1 (HELLO) with no flags, and body a161ff. A body well-formedness case has to be a frame whose body is plaintext cbOR, and an encrypted body is nonce || ciphertext || tag: validating it as cbOR before decrypting would reject every well-formed encrypted frame. HELLO and HELLO_ACK are the only unencrypted types, so the case uses HELLO. An earlier revision used PING and INPUT_TOUCH with no flags set; both must carry ENCRYPTED, so the encryption rule fired first and the frame answered ERR_UNAUTHORIZED, leaving the cbOR rule this case exists to test unreached."
     },
     {
       "id": "malformed.first-frame-not-hello",
       "note": "HELLO must be the first frame of a session. A PING first is a protocol violation, not a warning.",
-      "frame": "444c57500100180500000000000000010000000000000003000000",
+      "frame": "444c57500100180500000000000000010000000000000000",
       "first_frame_message_type": 5,
       "expected": "error_frame_then_close",
       "expected_error": "ERR_UNEXPECTED_MESSAGE",
@@ -118,7 +126,7 @@
     {
       "id": "malformed.unknown-message-type",
       "note": "An unregistered message type is answered with a recoverable error and the session survives, so that a newer peer cannot break an older one by sending a frame it has learned.",
-      "frame": "444c5750010018fe00000000000000050000000000000003000000",
+      "frame": "444c5750010018fe00000000000000050000000000000000",
       "expected": "error_session_continues",
       "expected_error": "ERR_UNSUPPORTED_MESSAGE",
       "expected_severity": "recoverable"
@@ -220,10 +228,11 @@
     {
       "id": "malformed.reserved-flag-bits-set",
       "note": "Bits 4-7 of the flags byte are reserved. A receiver must ignore them rather than fail, so that the bits can be assigned later without a version bump.",
-      "frame": "444c5750f100180500000000000000010000000000000003000000",
+      "frame": "444c575001f1180500000000000000010000000000000000",
       "expected": "accepted",
       "expected_error": null,
-      "expected_severity": null
+      "expected_severity": null,
+      "frame_note": "Flags byte 0xF1: every reserved bit set, plus ENCRYPTED, which PING requires. An earlier revision put the 0xF1 in the header_length field and left the flags byte at 0x00: the vector set no reserved bits at all while its name and note said it did, so it passed a receiver that ignored the flag field entirely."
     },
     {
       "id": "malformed.body-length-shorter-than-declared",
@@ -273,5 +282,6 @@
       "expected_error": "ERR_REPLAY_DETECTED",
       "expected_severity": "fatal"
     }
-  ]
+  ],
+  "vectors_note": "A frame is a 24-byte fixed header followed by exactly body_length bytes of body, and nothing else (RFC-0001 section 3.1). An earlier revision inserted three bytes between the header and the body of every frame, and added three to body_length to match, so every frame agreed with its own declared length and no length check could detect the defect. Its effect was substantive: the body a receiver decoded began with three bytes of noise rather than with the byte each note named, so the cases named for a leading 0xFF or 0xBF did not exercise that byte at all, and the accepted cases carried a three-byte body that is not a cbOR map. The bytes are not a length or a checksum: reading each note against the decoded body is what identified them. Frames now carry their body immediately after the header."
 }
