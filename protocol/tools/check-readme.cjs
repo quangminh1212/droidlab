@@ -73,30 +73,60 @@ const failed = summary.match(/checks failed\s+:\s+(\d+)/)?.[1];
 const files = summary.match(/vector files\s+:\s+(\d+)/)?.[1];
 const warnings = summary.match(/warnings\s+:\s+(\d+)/)?.[1];
 
+// The expected values are read out of the README rather than written here. A
+// hardcoded expectation checks the README against a stale copy of itself: it
+// cannot notice the README drifting, and it fails as soon as the real count
+// changes for a good reason. Reading the README means this compares the two
+// documents to each other, which is the thing that can actually be wrong.
+const readmeNumbers = (label) => {
+  const match = readme.match(new RegExp(`${label}\\s*:\\s*(\\d+)`));
+  return match?.[1] ?? null;
+};
+
 const expectations = [
-  ['checks passed', passed, '64'],
-  ['checks failed', failed, '0'],
-  ['vector files', files, '10'],
-  ['warnings', warnings, '0'],
+  ['checks passed', passed, readmeNumbers('checks passed')],
+  ['checks failed', failed, readmeNumbers('checks failed')],
+  ['vector files', files, readmeNumbers('vector files')],
+  ['warnings', warnings, readmeNumbers('warnings')],
 ];
 for (const [label, actual, want] of expectations) {
-  if (actual === want) pass(`${label} = ${actual}`);
-  else fail(`${label} is ${actual}, README implies ${want}`);
+  if (want === null) fail(`the README does not quote a "${label}" count`);
+  else if (actual === want) pass(`${label} = ${actual} (README and the run agree)`);
+  else fail(`${label} is ${actual}, README says ${want}`);
+}
+
+// The README also quotes the check total in prose, so the badge and the body
+// cannot disagree with each other or with the run.
+const badge = readme.match(/conformance-(\d+)%2F(\d+)%20checks/);
+if (badge) {
+  if (badge[1] === passed && badge[2] === passed) {
+    pass(`the conformance badge quotes ${passed}`);
+  } else {
+    fail(`the conformance badge says ${badge[1]}/${badge[2]} but the run passed ${passed}`);
+  }
 }
 
 // 4. Registry counts quoted in the README.
 const registry = JSON.parse(fs.readFileSync(path.join(ROOT, 'protocol/registry/dlwp-1.json'), 'utf8'));
+
+// Each label's expected count comes from the README's own registry-drift block,
+// so a genuine change to the registry fails here only when the README was not
+// updated with it.
+const readmeRegistryCount = (label) => {
+  const match = readme.match(new RegExp(`${label}\\s*:\\s*RFC\\s*\\d+\\s*\\/\\s*registry\\s*(\\d+)`));
+  return match?.[1] ?? null;
+};
+
 const counts = [
-  ['message types', registry.message_types.length, 42],
-  ['error codes', registry.error_codes.length, 22],
-  ['capabilities', registry.capabilities.length, 18],
-  ['limits', Object.keys(registry.default_limits).length, 8],
+  ['message types', registry.message_types.length, readmeRegistryCount('message types')],
+  ['error codes', registry.error_codes.length, readmeRegistryCount('error codes')],
+  ['capability names', registry.capabilities.length, readmeRegistryCount('capability names')],
+  ['limits', Object.keys(registry.default_limits).length, readmeRegistryCount('limits')],
 ];
 for (const [label, actual, want] of counts) {
-  const quoted = new RegExp(`${want}\\s*\\/\\s*registry\\s*${want}`).test(readme);
-  if (actual === want) pass(`${label} = ${actual} (registry and README agree)`);
+  if (want === null) fail(`the README does not quote a registry count for "${label}"`);
+  else if (actual === Number(want)) pass(`${label} = ${actual} (registry and README agree)`);
   else fail(`${label} is ${actual}, README quotes ${want}`);
-  void quoted;
 }
 
 // 5. Vector file names listed in the README must all exist.

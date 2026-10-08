@@ -1,14 +1,14 @@
-<div align="center">
+﻿<div align="center">
 
 # DroidLab
 
 **Turn an Android phone into a wireless test device for a Windows machine.**
 
 Mirror the screen, drive it with touch and keyboard input, run scoped shell
-commands, move files and stream logs — over Wi-Fi, with no cable and no cloud.
+commands, move files and stream logs â€” over Wi-Fi, with no cable and no cloud.
 
 [![Protocol](https://img.shields.io/badge/protocol-DLWP%2F1-2f6f4e)](#the-dlwp1-protocol)
-[![Conformance](https://img.shields.io/badge/conformance-64%2F64%20checks-2f6f4e)](#verifying-the-protocol)
+[![Conformance](https://img.shields.io/badge/conformance-74%2F74%20checks-2f6f4e)](#verifying-the-protocol)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![Android](https://img.shields.io/badge/android-11%2B%20(API%2030%2B)-3ddc84)](#requirements)
 [![Windows](https://img.shields.io/badge/windows-10%20%7C%2011-0078d4)](#requirements)
@@ -38,17 +38,17 @@ tooling at it.
 
 ### What you get
 
-- **Screen mirroring** — device-side H.264 encoding, hardware decode on the host,
+- **Screen mirroring** â€” device-side H.264 encoding, hardware decode on the host,
   low-latency access-unit streaming. Nothing is sent through a cloud service.
-- **Full input control** — touch with multi-pointer gestures, keycodes, text
+- **Full input control** â€” touch with multi-pointer gestures, keycodes, text
   commit, scroll. The phone reacts as if you were holding it.
-- **A real `adb` target** — the workstation's own ADB server reaches the device
+- **A real `adb` target** â€” the workstation's own ADB server reaches the device
   over Wi-Fi, so IDEs, Gradle tasks, `uiautomator` and CI scripts work unchanged.
-- **Scoped shell, not a remote root shell** — an explicit, auditable allow-list of
+- **Scoped shell, not a remote root shell** â€” an explicit, auditable allow-list of
   commands with per-argument validation. No shell interpreter is ever spawned.
-- **Files, clipboard and logs** — scoped file transfer, clipboard sync and
+- **Files, clipboard and logs** â€” scoped file transfer, clipboard sync and
   `logcat` streaming, all inside the same authenticated session.
-- **Pairing by QR code** — no typing IP addresses, ports or codes.
+- **Pairing by QR code** â€” no typing IP addresses, ports or codes.
 
 ---
 
@@ -68,39 +68,39 @@ leaves the machine is what you explicitly send.
 ## Architecture
 
 ```text
-        ┌─────────────────────────────────────────────────────────────┐
-        │                    Windows workstation                      │
-        │                                                             │
-        │   ┌─────────────────────────────────────────────────────┐   │
-        │   │  DroidLab Controller  (DroidLab.App, WPF)           │   │
-        │   │    mirror view · input · shell · files · logs       │   │
-        │   └───────────┬─────────────────────────┬───────────────┘   │
-        │               │                         │                   │
-        │   ┌───────────▼───────────┐ ┌───────────▼───────────────┐   │
-        │   │ DroidLab.Protocol     │ │ DroidLab.Adb              │   │
-        │   │ DLWP/1 codec, crypto  │ │ drives the local adb      │   │
-        │   └───────────┬───────────┘ │ server (adb pair/connect) │   │
-        │               │             └───────────┬───────────────┘   │
-        └───────────────┼─────────────────────────┼───────────────────┘
-                        │                         │
-                        │  DLWP/1 over TCP        │  ADB wire protocol
-                        │  AES-256-GCM sealed     │  (platform-provided)
-                        │                         │
-        ┌───────────────▼─────────────────────────▼───────────────────┐
-        │                  Android device (Wi-Fi / LAN)               │
-        │                                                             │
-        │   ┌─────────────────────────────────────────────────────┐   │
-        │   │  DroidLab Agent  (foreground service)               │   │
-        │   │    MediaProjection → MediaCodec (H.264)             │   │
-        │   │    Accessibility/InputManager injection             │   │
-        │   │    scoped shell · files · clipboard · logcat        │   │
-        │   └─────────────────────────┬───────────────────────────┘   │
-        │                             │                               │
-        │                   ┌─────────▼──────────┐                    │
-        │                   │ adbd (TCP mode)    │ ← enabled only by   │
-        │                   │ wireless debugging │   the operator      │
-        │                   └────────────────────┘                    │
-        └─────────────────────────────────────────────────────────────┘
+        â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+        â”‚                    Windows workstation                      â”‚
+        â”‚                                                             â”‚
+        â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+        â”‚   â”‚  DroidLab Controller  (DroidLab.App, WPF)           â”‚   â”‚
+        â”‚   â”‚    mirror view Â· input Â· shell Â· files Â· logs       â”‚   â”‚
+        â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+        â”‚               â”‚                         â”‚                   â”‚
+        â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+        â”‚   â”‚ DroidLab.Protocol     â”‚ â”‚ DroidLab.Adb              â”‚   â”‚
+        â”‚   â”‚ DLWP/1 codec, crypto  â”‚ â”‚ drives the local adb      â”‚   â”‚
+        â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â”‚ server (adb pair/connect) â”‚   â”‚
+        â”‚               â”‚             â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+        â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                        â”‚                         â”‚
+                        â”‚  DLWP/1 over TCP        â”‚  ADB wire protocol
+                        â”‚  AES-256-GCM sealed     â”‚  (platform-provided)
+                        â”‚                         â”‚
+        â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+        â”‚                  Android device (Wi-Fi / LAN)               â”‚
+        â”‚                                                             â”‚
+        â”‚   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”   â”‚
+        â”‚   â”‚  DroidLab Agent  (foreground service)               â”‚   â”‚
+        â”‚   â”‚    MediaProjection â†’ MediaCodec (H.264)             â”‚   â”‚
+        â”‚   â”‚    Accessibility/InputManager injection             â”‚   â”‚
+        â”‚   â”‚    scoped shell Â· files Â· clipboard Â· logcat        â”‚   â”‚
+        â”‚   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜   â”‚
+        â”‚                             â”‚                               â”‚
+        â”‚                   â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â–¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”                    â”‚
+        â”‚                   â”‚ adbd (TCP mode)    â”‚ â† enabled only by   â”‚
+        â”‚                   â”‚ wireless debugging â”‚   the operator      â”‚
+        â”‚                   â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜                    â”‚
+        â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### The two-pairing model
@@ -118,11 +118,11 @@ explicitly:
 
 **DLWP/1 pairing does not grant ADB access, and pairing ADB does not grant a
 DroidLab session.** They are separate ceremonies with separate secrets. The
-agent never enables wireless debugging silently — it is an explicit operator
+agent never enables wireless debugging silently â€” it is an explicit operator
 action, and its state is always reported truthfully.
 
 DroidLab implements its own mirroring, input, shell, file and log paths so that
-the product still works when wireless debugging is unavailable — an old device,
+the product still works when wireless debugging is unavailable â€” an old device,
 an MDM policy, or an operator who has refused it.
 
 ---
@@ -143,7 +143,7 @@ enforced by shared conformance vectors
 | Authentication | HMAC-SHA256 over the transcript | Mutual, binds both nonces and public keys |
 | Versioning | Highest common version, no best-effort parsing | Fail loudly, never guess |
 
-Full specification: **[RFC-0001 — DLWP/1](docs/rfc/RFC-0001-wire-protocol.md)**.
+Full specification: **[RFC-0001 â€” DLWP/1](docs/rfc/RFC-0001-wire-protocol.md)**.
 
 ### Specification documents
 
@@ -155,7 +155,7 @@ Full specification: **[RFC-0001 — DLWP/1](docs/rfc/RFC-0001-wire-protocol.md)*
 | [RFC-0004](docs/rfc/RFC-0004-shell-safety.md) | Shell allow-list policy and argument validation |
 | [ADR index](docs/adr/README.md) | Why the architecture is shaped this way |
 | [Architecture overview](docs/architecture/OVERVIEW.md) | Component responsibilities and data flow |
-| [Repository rules](docs/architecture/REPOSITORY.md) | Layout and dependency rules (R1–R7) |
+| [Repository rules](docs/architecture/REPOSITORY.md) | Layout and dependency rules (R1â€“R7) |
 
 ---
 
@@ -173,26 +173,26 @@ the advertisement is forged and is treated as an attack, not a warning.
 
 ```text
   Controller                                Agent
-      │                                       │
-      │  1. scan QR  ─────────────────────────►│  (out of band: camera)
-      │     { agent_id, agent_pub, token }    │
-      │                                       │
-      │  2. HELLO          (cleartext) ──────►│  client_id, client_pub, nonces
-      │  ◄──────  HELLO_ACK (cleartext)       │  agent_pub, capabilities
-      │                                       │
-      │  both sides compute:                  │
-      │     transcript_hash = SHA-256(transcript)
-      │     session keys    = HKDF(ECDH, transcript_hash)
-      │                                       │
-      │  3. AUTH           (encrypted) ──────►│  HMAC(pairing_secret, transcript_hash)
-      │  ◄──────  AUTH_OK  (encrypted)        │  session_id, negotiated capabilities
-      │                                       │
-      │  ── session established ──            │
+      â”‚                                       â”‚
+      â”‚  1. scan QR  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â–ºâ”‚  (out of band: camera)
+      â”‚     { agent_id, agent_pub, token }    â”‚
+      â”‚                                       â”‚
+      â”‚  2. HELLO          (cleartext) â”€â”€â”€â”€â”€â”€â–ºâ”‚  client_id, client_pub, nonces
+      â”‚  â—„â”€â”€â”€â”€â”€â”€  HELLO_ACK (cleartext)       â”‚  agent_pub, capabilities
+      â”‚                                       â”‚
+      â”‚  both sides compute:                  â”‚
+      â”‚     transcript_hash = SHA-256(transcript)
+      â”‚     session keys    = HKDF(ECDH, transcript_hash)
+      â”‚                                       â”‚
+      â”‚  3. AUTH           (encrypted) â”€â”€â”€â”€â”€â”€â–ºâ”‚  HMAC(pairing_secret, transcript_hash)
+      â”‚  â—„â”€â”€â”€â”€â”€â”€  AUTH_OK  (encrypted)        â”‚  session_id, negotiated capabilities
+      â”‚                                       â”‚
+      â”‚  â”€â”€ session established â”€â”€            â”‚
 ```
 
 A **6-digit confirmation code** derived from both public keys is shown on both
 screens. Comparing it by eye detects a man-in-the-middle during the pairing
-ceremony itself — the one moment the QR code alone cannot protect.
+ceremony itself â€” the one moment the QR code alone cannot protect.
 
 The pairing token is single-use with a 120-second lifetime. Failed attempts are
 rate-limited: 5 per minute, then pairing locks for 5 minutes.
@@ -208,8 +208,8 @@ side can revoke a pairing at any time, which immediately denies future sessions.
 Following the shape proven by `scrcpy` ([ADR-0005](docs/adr/ADR-0005-scrcpy-compatible-video-path.md)):
 
 ```text
-MediaProjection → encoder Surface → MediaCodec (H.264) → access units
-    → DLWP/1 VIDEO_FRAME → Windows hardware decode → render
+MediaProjection â†’ encoder Surface â†’ MediaCodec (H.264) â†’ access units
+    â†’ DLWP/1 VIDEO_FRAME â†’ Windows hardware decode â†’ render
 ```
 
 Codec configuration (SPS/PPS) travels once in `VIDEO_CONFIG`. No RTP, no WebRTC,
@@ -227,7 +227,7 @@ adb -s 192.168.1.42:5555 shell pm list packages
 ```
 
 Once connected, the device is a first-class ADB target for every tool on the
-workstation. DroidLab does **not** reimplement the ADB wire protocol — that path
+workstation. DroidLab does **not** reimplement the ADB wire protocol â€” that path
 is undocumented, version-coupled, and would still not be the ADB server that IDEs
 connect to.
 
@@ -238,7 +238,7 @@ design.
 
 - Each rule pins an absolute executable path, a literal `argv_prefix`, a maximum
   argument count, and a per-position regex for every operand.
-- Deny-listed binaries (`su`, `sh`, `rm`, `reboot`, …) always win over allow
+- Deny-listed binaries (`su`, `sh`, `rm`, `reboot`, â€¦) always win over allow
   entries, and are checked first.
 - A separate **allow level** (`read_only` vs `read_write`) gates *mutating* rules,
   so a vetted command still cannot change device state without a higher grant.
@@ -270,7 +270,7 @@ Policy source of truth: [RFC-0004](docs/rfc/RFC-0004-shell-safety.md).
 git clone https://github.com/quangminh1212/droidlab.git
 cd droidlab
 
-# Protocol checks — no toolchain beyond Node.js required
+# Protocol checks â€” no toolchain beyond Node.js required
 npm ci
 npm run check
 ```
@@ -328,7 +328,7 @@ To install:
 
 To also use `adb`-based tooling:
 
-1. On the device, enable **Developer Options → Wireless debugging**.
+1. On the device, enable **Developer Options â†’ Wireless debugging**.
 2. In DroidLab Controller, choose **Enable ADB** and enter the 6-digit wireless
    debugging code shown on the device.
 
@@ -347,24 +347,24 @@ nothing but Node.js:
 npm run check
 ```
 
-**1. Registry drift check** — fails if the normative registries in RFC-0001 and
+**1. Registry drift check** â€” fails if the normative registries in RFC-0001 and
 their machine-readable encoding disagree, in either direction:
 
 ```text
 message types    : RFC 42 / registry 42
 error codes      : RFC 22 / registry 22
 capability names : RFC 18 / registry 18
-default limits   : RFC  8 / registry  8
+default limits   : RFC  9 / registry  9
 
 The RFC and the machine-readable registry agree exactly, in both directions.
 ```
 
-**2. Conformance vector check** — 64 checks over 10 vector files:
+**2. Conformance vector check** â€” 74 checks over 10 vector files:
 
 ```text
 vector files     : 10
-checks executed  : 64
-checks passed    : 64
+checks executed  : 74
+checks passed    : 74
 checks failed    : 0
 warnings         : 0
 
@@ -372,7 +372,7 @@ All vectors are internally consistent and agree with the RFC registries.
 ```
 
 The vectors are the interoperability contract. Two independent implementations
-— the Kotlin codec and the C# codec — load the same files and must produce
+â€” the Kotlin codec and the C# codec â€” load the same files and must produce
 byte-identical results. A vector that cannot be reproduced from its own inputs is
 treated as a defect, because it makes wrong behaviour look verified.
 
@@ -395,36 +395,36 @@ treated as a defect, because it makes wrong behaviour look verified.
 
 ```text
 droidlab/
-├── docs/
-│   ├── rfc/                 Normative specifications (RFC-0001 … 0004)
-│   ├── adr/                 Architecture Decision Records + index
-│   ├── architecture/        Overview, repository rules and dependency rules
-│   └── operations/          Runbooks and release process
-├── protocol/                Language-neutral source of truth
-│   ├── registry/            Machine-readable normative registries
-│   ├── schema/              JSON Schema for every DLWP/1 frame
-│   ├── vectors/             Conformance vectors (the interop contract)
-│   └── tools/               Registry drift checker, vector verifier
-├── android/                 Android agent — the APK
-│   ├── app/                 UI and foreground service
-│   ├── core-protocol/       DLWP/1 codec, pairing crypto, session state
-│   ├── core-capture/        MediaProjection capture + H.264 encoding
-│   └── core-control/        Input injection, clipboard, shell, files
-├── windows/                 Windows controller — the EXE
-│   ├── DroidLab.App/        WPF shell
-│   ├── DroidLab.Core/       Orchestration and session management
-│   ├── DroidLab.Protocol/   DLWP/1 codec (mirrors core-protocol)
-│   ├── DroidLab.Discovery/  mDNS/DNS-SD
-│   ├── DroidLab.Adb/        The only place that spawns `adb`
-│   ├── DroidLab.Mirror/     Video decode and render
-│   └── DroidLab.Tests/      xUnit suite
-├── scripts/                 Build and release automation
-└── .github/                 CI workflows and templates
+â”œâ”€â”€ docs/
+â”‚   â”œâ”€â”€ rfc/                 Normative specifications (RFC-0001 â€¦ 0004)
+â”‚   â”œâ”€â”€ adr/                 Architecture Decision Records + index
+â”‚   â”œâ”€â”€ architecture/        Overview, repository rules and dependency rules
+â”‚   â””â”€â”€ operations/          Runbooks and release process
+â”œâ”€â”€ protocol/                Language-neutral source of truth
+â”‚   â”œâ”€â”€ registry/            Machine-readable normative registries
+â”‚   â”œâ”€â”€ schema/              JSON Schema for every DLWP/1 frame
+â”‚   â”œâ”€â”€ vectors/             Conformance vectors (the interop contract)
+â”‚   â””â”€â”€ tools/               Registry drift checker, vector verifier
+â”œâ”€â”€ android/                 Android agent â€” the APK
+â”‚   â”œâ”€â”€ app/                 UI and foreground service
+â”‚   â”œâ”€â”€ core-protocol/       DLWP/1 codec, pairing crypto, session state
+â”‚   â”œâ”€â”€ core-capture/        MediaProjection capture + H.264 encoding
+â”‚   â””â”€â”€ core-control/        Input injection, clipboard, shell, files
+â”œâ”€â”€ windows/                 Windows controller â€” the EXE
+â”‚   â”œâ”€â”€ DroidLab.App/        WPF shell
+â”‚   â”œâ”€â”€ DroidLab.Core/       Orchestration and session management
+â”‚   â”œâ”€â”€ DroidLab.Protocol/   DLWP/1 codec (mirrors core-protocol)
+â”‚   â”œâ”€â”€ DroidLab.Discovery/  mDNS/DNS-SD
+â”‚   â”œâ”€â”€ DroidLab.Adb/        The only place that spawns `adb`
+â”‚   â”œâ”€â”€ DroidLab.Mirror/     Video decode and render
+â”‚   â””â”€â”€ DroidLab.Tests/      xUnit suite
+â”œâ”€â”€ scripts/                 Build and release automation
+â””â”€â”€ .github/                 CI workflows and templates
 ```
 
 The `android/core-protocol` and `windows/DroidLab.Protocol` codecs are
 **siblings, not shared libraries**. They must not reference each other; the
-vectors are what keeps them honest. Dependency rules R1–R7 are specified in
+vectors are what keeps them honest. Dependency rules R1â€“R7 are specified in
 [docs/architecture/REPOSITORY.md](docs/architecture/REPOSITORY.md) and enforced
 in review.
 
@@ -434,20 +434,20 @@ in review.
 
 | Milestone | Scope | Status |
 | --------- | ----- | ------ |
-| **M0 — Specification** | RFC-0001…0004, ADRs, schemas, registries, conformance vectors, verifiers | ✅ Complete |
-| **M1 — Protocol codecs** | Kotlin and C# DLWP/1 codecs passing all 64 vectors | ⬜ Next |
-| **M2 — Pairing + discovery** | QR pairing, mDNS advertisement and verification, session establishment | ⬜ Planned |
-| **M3 — Mirror + input** | MediaProjection capture, H.264 streaming, hardware decode, touch/key/text | ⬜ Planned |
-| **M4 — Shell + files + logs** | Allow-listed shell, scoped file transfer, clipboard, logcat | ⬜ Planned |
-| **M5 — ADB integration** | `adb pair`/`connect` flow, endpoint re-resolution, serial surfacing | ⬜ Planned |
-| **M6 — Release engineering** | Signed APK/EXE, CI matrix, reproducible builds, release notes | ⬜ Planned |
+| **M0 â€” Specification** | RFC-0001â€¦0004, ADRs, schemas, registries, conformance vectors, verifiers | âœ… Complete |
+| **M1 â€” Protocol codecs** | Kotlin and C# DLWP/1 codecs passing all 74 vector checks | â¬œ Next |
+| **M2 â€” Pairing + discovery** | QR pairing, mDNS advertisement and verification, session establishment | â¬œ Planned |
+| **M3 â€” Mirror + input** | MediaProjection capture, H.264 streaming, hardware decode, touch/key/text | â¬œ Planned |
+| **M4 â€” Shell + files + logs** | Allow-listed shell, scoped file transfer, clipboard, logcat | â¬œ Planned |
+| **M5 â€” ADB integration** | `adb pair`/`connect` flow, endpoint re-resolution, serial surfacing | â¬œ Planned |
+| **M6 â€” Release engineering** | Signed APK/EXE, CI matrix, reproducible builds, release notes | â¬œ Planned |
 
 ---
 
 ## Security
 
-The threat model is written down rather than assumed — see
-[RFC-0002 §2](docs/rfc/RFC-0002-pairing-and-session-security.md). In short:
+The threat model is written down rather than assumed â€” see
+[RFC-0002 Â§2](docs/rfc/RFC-0002-pairing-and-session-security.md). In short:
 
 **Protected against:** passive eavesdroppers, active on-path attackers who inject
 or replay, impersonating agents on the LAN, connection attempts without a
@@ -455,7 +455,7 @@ pairing secret, QR-code replay, pairing-token brute force, and listener flooding
 
 **Deliberately not protected against:** a compromised or rooted endpoint, traffic
 metadata, a network operator who also sees the QR code, and first-use
-authentication across the internet — DLWP/1 is a LAN protocol.
+authentication across the internet â€” DLWP/1 is a LAN protocol.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md). Do not open a
 public issue for a security report.
@@ -469,7 +469,7 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 The one rule that matters most: **one logical change per commit**, using
 [Conventional Commits](https://www.conventionalcommits.org/). Every commit must
 leave `npm run check` green. Changing the wire format means changing the RFC, the
-schema, the vectors and both codecs together — in that order.
+schema, the vectors and both codecs together â€” in that order.
 
 All participants are expected to follow the
 [Code of Conduct](CODE_OF_CONDUCT.md).
@@ -478,7 +478,7 @@ All participants are expected to follow the
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 â€” see [LICENSE](LICENSE).
 
 DroidLab's repository layout and parts of its documentation structure are
 inspired by the IETF RFC and CNCF ADR conventions. Third-party dependencies and

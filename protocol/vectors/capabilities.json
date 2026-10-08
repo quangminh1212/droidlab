@@ -79,13 +79,14 @@
     },
     {
       "id": "negotiate.empty-intersection",
-      "note": "A session with no shared capability is legal but useless. Both sides must still complete the handshake and report an empty set, because the device information and error channels must remain usable for diagnostics.",
+      "note": "A session with no shared capability is legal but useless. Both sides must still complete the handshake and report an empty set, because the capability and error channels must remain usable for diagnostics.",
       "agent_capabilities": ["shell.exec"],
       "agent_disabled": [],
       "controller_offered": ["screen.mirror"],
       "expected_negotiated": [],
       "expected_error": null,
-      "note_on_error": "An empty negotiated set is not an error. An attempt to use a capability outside it is ERR_UNSUPPORTED_FEATURE."
+      "note_on_error": "An empty negotiated set is not an error. An attempt to use a capability outside it is ERR_UNSUPPORTED_FEATURE.",
+      "note_on_diagnostics": "An earlier revision of this note said the 'device information and error channels' stay usable. That was wrong: the registry gates DEVICE_INFO and DEVICE_INFO_RESULT under device.info, and a controller that offered nothing must not read device metadata. What keeps this case diagnosable is that GET_CAPABILITIES, CAPABILITIES and ERROR are ungated, so the controller can still ask what the device supports and still receive the refusal. The note now says capability and error channels, and a test pins the registry's answer as normative."
     },
     {
       "id": "negotiate.unknown-capability-name-ignored",
