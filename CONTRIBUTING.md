@@ -88,6 +88,30 @@ protocol layer, the vectors, the Windows session manager and the ADB client are
 all testable without one. `scripts/run-emulator.ps1` starts the system image that
 is already configured for manual end-to-end checks.
 
+#### Current state of the Android build
+
+The commands above are the intended commands, not ones that work today. **The Gradle
+build does not exist yet** — there is no wrapper, no Android SDK requirement satisfied,
+and consequently `./gradlew :core-protocol:test` cannot run. It is written down because it
+is the shape the build is being given, and leaving it out would make the document less
+useful than the truth allows.
+
+What this means for you, honestly:
+
+- `npm run check` works and needs nothing but Node.js. It is the only gate that runs
+  everywhere, and it is the one that protects the protocol.
+- `dotnet build` and `dotnet test` work on Windows with the .NET 8 SDK. The C# protocol
+  implementation is tested and passing.
+- The Kotlin sources under `android/core-protocol` are real, follow the same vectors and
+  are structured to be tested by the same files — but they have **not been compiled**.
+  If you have an Android SDK and Gradle, running them is a genuinely useful contribution;
+  expect to fix compile errors, since none has been caught by a compiler yet.
+
+A file that has never been through a compiler is unverified. Do not describe Kotlin
+changes as "tested" or "passing" in a pull request unless you actually ran the tests —
+the [Verifying the protocol](README.md#what-is-verified-and-what-is-not) section of the
+README states which half of M1 that applies to.
+
 ## Making a change
 
 1. **Branch** from `main`: `feat/<slug>`, `fix/<slug>`, `docs/<slug>`,
@@ -171,6 +195,11 @@ commit should be reviewable on its own, revertible on its own, and should leave
   steps, make each step a commit that builds and passes tests: the types and
   schema first, then the implementation, then the wiring, then the UI.
 * Do not use `git commit -a` to sweep up whatever is dirty. Stage explicitly.
+* **Do not edit a generated file by hand.** `android/core-protocol/.../ErrorCodes.kt` is
+  generated from `protocol/registry/dlwp-1.json`; change the registry, run
+  `node protocol/tools/generate-kotlin-error-codes.cjs`, and commit both. `npm run check`
+  regenerates every generated file and fails if the committed copy differs, so an edit
+  made by hand will be caught rather than silently overwriting the source of truth.
 * A pull request may contain many commits; that is expected and preferred over
   one large squashed commit. The repository does **not** squash on merge.
 * Each commit message describes the one thing that commit does. If you cannot
