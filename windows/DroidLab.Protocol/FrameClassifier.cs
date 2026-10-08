@@ -377,6 +377,49 @@ public static class FrameClassifier
     /// </para>
     /// </remarks>
     public static ReceiveVerdict ClassifySequence(uint sequenceNumber, uint? highestSeen, uint window = ReorderWindow)
+        => ClassifySequence(sequenceNumber, highestSeen, seenBefore: null, window);
+
+    /// <summary>
+    /// Classifies a sequence number against what has already been accepted.
+    /// </summary>
+    /// <param name="sequenceNumber">The number to classify.</param>
+    /// <param name="highestSeen">The highest number accepted, or null.</param>
+    /// <param name="seenBefore">
+    /// Whether this exact number has already been accepted, or null when that is not
+    /// known. Supplying it is what distinguishes a duplicate from a reorder.
+    /// </param>
+    /// <param name="window">The reordering window.</param>
+    /// <returns>The verdict.</returns>
+    /// <remarks>
+    /// <para>
+    /// The check on an exact repeat comes before the window check and is not a special
+    /// case of being behind. The two are different questions, and the window cannot
+    /// answer one of them: a number below the head may be a reorder that has not
+    /// arrived yet or a duplicate that has, and both look identical when all that is
+    /// known is the highest number seen.
+    /// </para>
+    /// <para>
+    /// Getting this wrong is not subtle in its effect. The vector
+    /// <c>malformed.sequence-not-monotonic</c> is <c>[1,2,3,3]</c> — a repeat of the
+    /// head, which is what a naive replay looks like — and the window alone accepts it
+    /// as a reorder, because zero frames behind is inside the window. Meanwhile
+    /// <c>malformed.sequence-gap-within-window</c> is <c>[1,2,3,5,4,6]</c>, where 4 is
+    /// behind 5 but has never arrived, and that must be accepted. Only the seen-set
+    /// separates them. The session transcript's step 17 is the same shape as the first
+    /// case and is why this parameter exists.
+    /// </para>
+    /// <para>
+    /// When <paramref name="seenBefore"/> is null the second arrival of a number
+    /// cannot be recognised, and the zero-behind case is treated as a repeat, which is
+    /// the safe default: a caller that cannot say whether a number was already seen
+    /// should not accept it twice.
+    /// </para>
+    /// </remarks>
+    public static ReceiveVerdict ClassifySequence(
+        uint sequenceNumber,
+        uint? highestSeen,
+        bool? seenBefore,
+        uint window = ReorderWindow)
     {
         // The first frame of a session has nothing before it to be a replay of.
         if (highestSeen is null)
@@ -388,6 +431,17 @@ public static class FrameClassifier
         }
 
         uint highest = highestSeen.Value;
+
+        // A number that has already been accepted is a replay at any distance, and
+        // this is checked before the window so a duplicate is never excused as a
+        // reorder.
+        if (seenBefore == true)
+        {
+            return new ReceiveVerdict(
+                ReceiveAction.ErrorFrameThenClose,
+                ErrorCodes.ReplayDetected,
+                $"sequence number {sequenceNumber} has already been accepted on this session");
+        }
 
         if (sequenceNumber == highest)
         {
