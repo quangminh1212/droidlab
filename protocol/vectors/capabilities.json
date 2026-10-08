@@ -32,9 +32,9 @@
     "max_video_bitrate": 16000000,
     "max_file_chunk": 262144,
     "shell_timeout_ms": 30000,
-    "max_gesture_steps": 256,
-    "max_pending_handshakes": 4
+    "max_gesture_steps": 256
   },
+  "default_limits_note": "This list must equal RFC-0001 section 7.3 and protocol/registry/dlwp-1.json exactly. An earlier revision carried a tenth entry, max_pending_handshakes, which appears nowhere in the RFC: it was removed rather than added, because the RFC is the source of truth and inventing a limit in a vector is how a normative table stops being one. max_gesture_steps was the opposite case and was instead added to the RFC, because section 8.2 already required it for INPUT_GESTURE without ever declaring it. The verifier now fails if this list and the registry differ.",
   "negotiation_vectors": [
     {
       "id": "negotiate.full-intersection",

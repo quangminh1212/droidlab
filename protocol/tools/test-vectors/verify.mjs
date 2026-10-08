@@ -611,6 +611,49 @@ function checkCapabilities(file, doc) {
     if (typeof value !== 'number') fail(file, 'default_limits', `${key} is not a number`);
   }
 
+  // The vector's limit list must equal the normative registry exactly. An
+  // earlier revision of this file carried max_pending_handshakes, which appears
+  // nowhere in RFC-0001: a limit invented in a vector is how a normative table
+  // stops being normative. Comparing both directions catches a limit added here
+  // without the RFC as well as one removed from the RFC and left here.
+  const limitsRegistry = loadRegistries();
+  if (limitsRegistry?.defaultLimits && Object.keys(limitsRegistry.defaultLimits).length > 0) {
+    const vectorKeys = Object.keys(defaults).sort();
+    const registryKeys = Object.keys(limitsRegistry.defaultLimits).sort();
+
+    const onlyInVector = vectorKeys.filter((k) => !registryKeys.includes(k));
+    const onlyInRegistry = registryKeys.filter((k) => !vectorKeys.includes(k));
+
+    if (onlyInVector.length > 0) {
+      fail(
+        file,
+        'default_limits',
+        `declares ${onlyInVector.join(', ')} which the registry does not; a limit must be added to ` +
+          'RFC-0001 section 7.3 and the registry before it appears here',
+      );
+    } else if (onlyInRegistry.length > 0) {
+      fail(
+        file,
+        'default_limits',
+        `is missing ${onlyInRegistry.join(', ')} which the registry declares`,
+      );
+    } else {
+      // Values must agree too, not just the key sets.
+      const mismatched = registryKeys.filter((k) => defaults[k] !== limitsRegistry.defaultLimits[k]);
+      if (mismatched.length > 0) {
+        fail(
+          file,
+          'default_limits',
+          `disagrees with the registry on ${mismatched
+            .map((k) => `${k} (vector ${defaults[k]}, registry ${limitsRegistry.defaultLimits[k]})`)
+            .join(', ')}`,
+        );
+      } else {
+        ok('default_limits agrees with the registry on every key and value');
+      }
+    }
+  }
+
   const directions = Array.isArray(doc.direction_vectors) ? doc.direction_vectors : [];
   for (const vector of directions) {
     const id = vector.id ?? '(unnamed)';

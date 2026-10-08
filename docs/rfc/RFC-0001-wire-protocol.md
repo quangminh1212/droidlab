@@ -400,6 +400,7 @@ the operator disabled on the device as absent.
 | `max_video_bitrate` | int | `16000000` | Bit/s ceiling. |
 | `max_file_chunk` | int | `262144` | Largest `FILE_CHUNK` body. |
 | `shell_timeout_ms` | int | `30000` | Default shell deadline. |
+| `max_gesture_steps` | int | `256` | Steps in a single `INPUT_GESTURE`, see §8.2. |
 
 ### 7.4 Channels
 

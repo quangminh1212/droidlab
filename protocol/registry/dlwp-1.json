@@ -151,7 +151,8 @@
     "max_video_fps": 60,
     "max_video_bitrate": 16000000,
     "max_file_chunk": 262144,
-    "shell_timeout_ms": 30000
+    "shell_timeout_ms": 30000,
+    "max_gesture_steps": 256
   },
 
   "severity_rules": [
