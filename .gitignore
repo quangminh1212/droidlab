@@ -130,3 +130,6 @@ temp/
 # Scratch files that must never be committed
 COMMIT_MSG_TMP.txt
 MSG.txt
+
+# Local scratch space for one-off inspection scripts.
+scratch/
