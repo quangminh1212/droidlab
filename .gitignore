@@ -129,3 +129,4 @@ temp/
 
 # Scratch files that must never be committed
 COMMIT_MSG_TMP.txt
+MSG.txt
