@@ -149,6 +149,15 @@ sealed interface JsonValue {
 
     /** This value as an array. */
     fun asArray(): List<JsonValue> = (this as Arr).items
+
+    /**
+     * This value as an object, keyed by property name.
+     *
+     * Returns a plain map rather than the `Obj` so that a caller which only wants the entries
+     * -- to check a set of names, or to compare two objects by key -- does not depend on the
+     * `Obj` type and cannot accidentally mutate the parsed document.
+     */
+    fun asObject(): Map<String, JsonValue> = (this as Obj).entries.toMap()
 }
 
 /**

@@ -1234,6 +1234,455 @@ function sha256(input) {
 }
 
 // ---------------------------------------------------------------------------
+// CapabilityNegotiation  --  mirror of CapabilityNegotiation.kt
+// ---------------------------------------------------------------------------
+
+const CAPABILITY_REGISTRY = [
+  'screen.mirror', 'screen.record', 'input.touch', 'input.key', 'input.text', 'input.gesture',
+  'clipboard.read', 'clipboard.write', 'shell.exec', 'file.read', 'file.write', 'log.stream',
+  'app.install', 'app.launch', 'device.info', 'adb.wireless', 'compression.deflate', 'telemetry.stats',
+];
+
+const DEFAULT_LIMITS = {
+  max_frame_bytes: 16777216,
+  max_channels: 8,
+  max_video_width: 1920,
+  max_video_height: 1080,
+  max_video_fps: 60,
+  max_video_bitrate: 16000000,
+  max_file_chunk: 262144,
+  shell_timeout_ms: 30000,
+  max_gesture_steps: 256,
+};
+
+/** Mirror of CapabilityNegotiation.negotiate. */
+function negotiate(agentCapabilities, agentDisabled, controllerOffered) {
+  const agent = new Set(agentCapabilities);
+  const disabled = new Set(agentDisabled);
+  const offered = new Set(controllerOffered);
+
+  const negotiated = [...agent].filter(
+    (name) => offered.has(name) && !disabled.has(name) && CAPABILITY_REGISTRY.includes(name),
+  );
+
+  // Sorted ordinally, because the order is part of the contract: it is what is serialised
+  // into the transcript, and two peers must compute the same bytes.
+  return negotiated.sort();
+}
+
+/**
+ * Mirror of CapabilityNegotiation.clampVideo.
+ *
+ * The request is a ceiling on each axis, NOT a shape, and the SCREEN is the thing that gets
+ * scaled. The effective size is the screen's size scaled down to fit inside the requested
+ * box, so the aspect ratio comes from the screen.
+ *
+ * Getting this backwards letterboxes a screen whose orientation differs from the request: a
+ * 1920x1080 request against a 1080x2400 portrait screen must give a portrait 486x1080, while
+ * deriving the ratio from the request gives a landscape 1080x608. This mirror was wrong in
+ * exactly that way twice before the vector settled it -- first by fitting the request to the
+ * screen, then by min-ing the screen against the ceiling without scaling at all. Both were
+ * wrong for the same reason: neither scaled the screen.
+ */
+function clampVideo(requestedWidth, requestedHeight, requestedFps, agentLimits, screenWidth, screenHeight) {
+  const even = (v) => (v % 2 === 0 ? v : v - 1);
+
+  const ceilingWidth = Math.min(requestedWidth, agentLimits.max_video_width ?? DEFAULT_LIMITS.max_video_width);
+  const ceilingHeight = Math.min(requestedHeight, agentLimits.max_video_height ?? DEFAULT_LIMITS.max_video_height);
+
+  // The agent's frame-rate ceiling applies regardless of the screen.
+  const fps = Math.min(requestedFps, agentLimits.max_video_fps ?? DEFAULT_LIMITS.max_video_fps);
+
+  // The smaller of the two axis ratios fits BOTH axes; the larger would overflow one.
+  const scale = Math.min(ceilingWidth / screenWidth, ceilingHeight / screenHeight);
+
+  // Only scale down: a ratio above one would mean capturing more pixels than the screen has,
+  // which is interpolation.
+  const effectiveScale = Math.min(1.0, scale);
+
+  return {
+    width: even(Math.max(2, Math.round(screenWidth * effectiveScale))),
+    height: even(Math.max(2, Math.round(screenHeight * effectiveScale))),
+    fps,
+  };
+}
+
+/** Mirror of CapabilityNegotiation.clampFileChunk. */
+function clampFileChunk(requestedChunk, agentMaxFileChunk) {
+  if (requestedChunk > agentMaxFileChunk) {
+    return { accepted: false, error: 'ERR_FRAME_TOO_LARGE', effectiveChunk: 0 };
+  }
+  return { accepted: true, error: null, effectiveChunk: requestedChunk };
+}
+
+/** Mirror of CapabilityNegotiation.nextChannelId. */
+function nextChannelId(lastAllocated, controller) {
+  const first = controller ? 1 : 2;
+  const next = lastAllocated === null || lastAllocated === undefined ? first : lastAllocated + 2;
+  return next > 0xffffffff ? null : next;
+}
+
+/** Mirror of CapabilityNegotiation.openChannel. */
+function openChannel(requested, openChannels, maxChannels) {
+  if (openChannels.has(requested)) return { accepted: false, error: 'ERR_BAD_STATE' };
+  if (openChannels.size >= maxChannels) return { accepted: false, error: 'ERR_CHANNEL_LIMIT' };
+  return { accepted: true, error: null };
+}
+
+// ---- CapabilityNegotiationTest.theRegistryMatchesTheFileInBothDirections --------
+{
+  const caps = load('capabilities.json');
+  expect(Array.isArray(caps.capability_registry), 'capabilities.json has a capability_registry array');
+
+  const fromFile = new Set(caps.capability_registry);
+  const inCode = new Set(CAPABILITY_REGISTRY);
+
+  // Both directions: one alone cannot catch a capability the code knows and the file does not.
+  const missingFromCode = [...fromFile].filter((c) => !inCode.has(c));
+  const extraInCode = [...inCode].filter((c) => !fromFile.has(c));
+
+  expect(missingFromCode.length === 0, `every capability in the file is known to the code (missing: ${missingFromCode.join(', ')})`);
+  expect(extraInCode.length === 0, `every capability in the code is in the file (extra: ${extraInCode.join(', ')})`);
+  expect(fromFile.size === 18, `the registry has 18 capabilities (found ${fromFile.size})`);
+}
+
+// ---- CapabilityNegotiationTest.theDefaultLimitsMatchTheFile ---------------------
+{
+  const caps = load('capabilities.json');
+  const fromFile = caps.default_limits;
+
+  expect(!!fromFile, 'capabilities.json has default_limits');
+  expect(!!caps.default_limits_note, 'the limits carry their note');
+
+  const fileNames = Object.keys(fromFile).sort();
+  const codeNames = Object.keys(DEFAULT_LIMITS).sort();
+
+  // The file's own note records that this list once carried a tenth entry appearing nowhere
+  // in the RFC, and that the fix was to remove it rather than add it to the RFC. The count is
+  // therefore the assertion that matters: it is what would catch that entry coming back.
+  expect(fileNames.length === 9, `the limits list has exactly nine entries (found ${fileNames.length})`);
+  expect(
+    fileNames.join(',') === codeNames.join(','),
+    `the limit names match\n           file: ${fileNames.join(', ')}\n           code: ${codeNames.join(', ')}`,
+  );
+
+  for (const name of fileNames) {
+    expect(
+      fromFile[name] === DEFAULT_LIMITS[name],
+      `the limit "${name}" matches (file ${fromFile[name]}, code ${DEFAULT_LIMITS[name]})`,
+    );
+  }
+}
+
+// ---- CapabilityNegotiationTest.everyNegotiationVectorProducesItsDeclaredSet -----
+{
+  const caps = load('capabilities.json');
+  const vectors = caps.negotiation_vectors || [];
+
+  expect(vectors.length >= 8, `capabilities.json declares at least 8 negotiation vectors (found ${vectors.length})`);
+
+  for (const v of vectors) {
+    const negotiated = negotiate(v.agent_capabilities, v.agent_disabled, v.controller_offered);
+
+    // Compared as a sorted list against the vector's declared list. Comparing as sets would
+    // pass even if the implementation returned a differently ordered sequence, and the order
+    // is part of the contract.
+    const expected = [...v.expected_negotiated].sort();
+
+    expect(
+      negotiated.join(',') === expected.join(','),
+      `${v.id} negotiated set\n           expected: ${expected.join(', ')}\n           actual:   ${negotiated.join(', ')}`,
+    );
+  }
+}
+
+// ---- CapabilityNegotiationTest: the individual negotiation rules ----------------
+{
+  const caps = load('capabilities.json');
+  const byId = (id) => caps.negotiation_vectors.find((v) => v.id === id);
+
+  // A capability the controller never offered must not be negotiated even though the agent
+  // supports it.
+  const subset = byId('negotiate.controller-subset');
+  expect(!!subset, 'negotiate.controller-subset exists');
+  if (subset) {
+    expect(
+      subset.agent_capabilities.length > subset.controller_offered.length,
+      'the scenario must have the agent supporting more than was offered, or it tests nothing',
+    );
+
+    const negotiated = negotiate(subset.agent_capabilities, subset.agent_disabled, subset.controller_offered);
+
+    for (const name of subset.agent_capabilities) {
+      if (!subset.controller_offered.includes(name)) {
+        expect(!negotiated.includes(name), `${name} was never offered and must not be negotiated`);
+      }
+    }
+  }
+
+  // An operator's disable wins even when both sides support the capability, so the
+  // subtraction is doing work the intersection alone would not.
+  const disabled = byId('negotiate.operator-disabled-wins-even-when-both-support-it');
+  expect(!!disabled, 'the operator-disabled vector exists');
+  if (disabled) {
+    const intersection = disabled.agent_capabilities.filter((c) => disabled.controller_offered.includes(c));
+
+    for (const name of disabled.agent_disabled) {
+      expect(
+        intersection.includes(name),
+        `${name} must be in the intersection before disabling, or the subtraction proves nothing`,
+      );
+    }
+
+    const negotiated = negotiate(disabled.agent_capabilities, disabled.agent_disabled, disabled.controller_offered);
+
+    for (const name of disabled.agent_disabled) {
+      expect(!negotiated.includes(name), `${name} is disabled by the operator and must not be negotiated`);
+    }
+  }
+
+  // An empty intersection is a working session: the empty set serialises to the empty string.
+  const empty = byId('negotiate.empty-intersection');
+  expect(!!empty, 'negotiate.empty-intersection exists');
+  if (empty) {
+    const negotiated = negotiate(empty.agent_capabilities, empty.agent_disabled, empty.controller_offered);
+
+    expect(negotiated.length === 0, 'the intersection is empty');
+    expect(negotiated.join(',') === '', 'an empty set serialises to the empty string');
+    expect(empty.expected_negotiated.length === 0, 'the vector declares it as empty');
+  }
+
+  // A name outside the registry is ignored, not refused -- which is the forward-compatibility
+  // rule, and it matters because refusing would make a future revision unusable on an old peer.
+  const unknown = byId('negotiate.unknown-capability-name-ignored');
+  expect(!!unknown, 'the unknown-capability vector exists');
+  if (unknown) {
+    const outside = unknown.agent_capabilities.filter((c) => !CAPABILITY_REGISTRY.includes(c));
+
+    expect(
+      outside.length > 0,
+      `the vector must offer a name outside the registry, or it tests nothing (has ${unknown.agent_capabilities.length} names)`,
+    );
+
+    const negotiated = negotiate(unknown.agent_capabilities, unknown.agent_disabled, unknown.controller_offered);
+
+    for (const name of outside) {
+      expect(!negotiated.includes(name), `${name} is not in the registry and must not be agreed to`);
+    }
+  }
+
+  // A duplicate must normalise to one: the set is serialised into the transcript, and
+  // "[a,a]" and "[a]" are different byte strings for the same agreement.
+  const dupes = byId('negotiate.duplicate-names-normalised');
+  expect(!!dupes, 'the duplicate-names vector exists');
+  if (dupes) {
+    const agentHasDupe = new Set(dupes.agent_capabilities).size !== dupes.agent_capabilities.length;
+    const offerHasDupe = new Set(dupes.controller_offered).size !== dupes.controller_offered.length;
+
+    expect(agentHasDupe || offerHasDupe, 'the vector must carry a duplicate, or it tests nothing');
+
+    const negotiated = negotiate(dupes.agent_capabilities, dupes.agent_disabled, dupes.controller_offered);
+
+    expect(new Set(negotiated).size === negotiated.length, 'the negotiated set carries no duplicates');
+  }
+}
+
+// ---- CapabilityNegotiationTest.everyLimitVectorProducesItsDeclaredResult --------
+{
+  const caps = load('capabilities.json');
+  const vectors = caps.limit_clamp_vectors || [];
+
+  expect(vectors.length >= 4, `capabilities.json declares at least 4 limit vectors (found ${vectors.length})`);
+
+  for (const v of vectors) {
+    switch (v.id) {
+      case 'limits.video-clamp-to-agent-maximum': {
+        // This vector carries no screen, so it isolates the ceiling clamp: with no capture
+        // surface to fit, the effective size is the ceiling itself. Passing a screen here
+        // would test the aspect-ratio fit instead and the vector's expected values would no
+        // longer be the ones being checked.
+        const applied = clampVideo(
+          v.requested.max_width,
+          v.requested.max_height,
+          v.requested.fps,
+          v.agent_limits,
+          v.requested.max_width,
+          v.requested.max_height,
+        );
+
+        expect(applied.width === v.expected_applied.width, `${v.id} width is ${v.expected_applied.width} (got ${applied.width})`);
+        expect(applied.height === v.expected_applied.height, `${v.id} height is ${v.expected_applied.height} (got ${applied.height})`);
+        expect(applied.fps === v.expected_applied.fps, `${v.id} fps is ${v.expected_applied.fps} (got ${applied.fps})`);
+
+        // The clamp is a reduction, never an increase: the request asked for 2560x1440 and
+        // the agent allows 1920x1080, so both axes came down.
+        expect(applied.width < v.requested.max_width, `${v.id} the width was clamped down`);
+        expect(applied.height < v.requested.max_height, `${v.id} the height was clamped down`);
+        break;
+      }
+
+      case 'limits.video-clamp-to-screen-size': {
+        const applied = clampVideo(
+          v.requested.max_width,
+          v.requested.max_height,
+          60,
+          DEFAULT_LIMITS,
+          v.screen.width,
+          v.screen.height,
+        );
+
+        // The aspect-ratio fit is the interesting part: 1920x1080 requested against a
+        // 1080x2400 screen must become 486x1080, preserving the screen's ratio with both
+        // dimensions even, as H.264 requires.
+        expect(applied.width === v.expected_applied.width, `${v.id} width is ${v.expected_applied.width} (got ${applied.width})`);
+        expect(applied.height === v.expected_applied.height, `${v.id} height is ${v.expected_applied.height} (got ${applied.height})`);
+        expect(applied.width % 2 === 0, `${v.id} width is even`);
+        expect(applied.height % 2 === 0, `${v.id} height is even`);
+        break;
+      }
+
+      case 'limits.file-chunk-clamped': {
+        // Refused rather than truncated: a truncated chunk is a silently short buffer the
+        // controller believes is full, indistinguishable from a short file.
+        const refused = clampFileChunk(v.requested_chunk, v.agent_max_file_chunk);
+
+        expect(refused.accepted === false, `${v.id} is refused`);
+        expect(refused.error === v.expected_error, `${v.id} error is ${v.expected_error} (got ${refused.error})`);
+        expect(refused.effectiveChunk === 0, `${v.id} reports no effective chunk, because there is none`);
+
+        const atLimit = clampFileChunk(v.agent_max_file_chunk, v.agent_max_file_chunk);
+        expect(atLimit.accepted === true, `${v.id} exactly at the limit is accepted`);
+        break;
+      }
+
+      case 'limits.shell-timeout-clamped': {
+        // Clamped rather than refused: a long deadline is a preference, and a shorter one
+        // still does what the controller asked.
+        const applied = Math.min(v.requested_timeout_ms, v.agent_shell_timeout_ms);
+        expect(applied === v.expected_applied_timeout_ms, `${v.id} applied timeout is ${v.expected_applied_timeout_ms} (got ${applied})`);
+        expect(Math.min(1000, v.agent_shell_timeout_ms) === 1000, `${v.id} honours a request under the limit`);
+        break;
+      }
+
+      default:
+        throw new Error(`unhandled limit vector ${v.id}`);
+    }
+  }
+}
+
+// ---- CapabilityNegotiationTest.everyDirectionVectorProducesItsDeclaredResult ----
+{
+  const caps = load('capabilities.json');
+  const vectors = caps.direction_vectors || [];
+
+  expect(vectors.length >= 2, `capabilities.json declares at least 2 direction vectors (found ${vectors.length})`);
+
+  for (const v of vectors) {
+    if (v.id === 'negotiate.controller-allocates-odd-channel-ids') {
+      const build = (n, controller) => {
+        const out = [];
+        let last = null;
+        for (let i = 0; i < n; i++) {
+          last = nextChannelId(last, controller);
+          if (last === null) throw new Error('the allocator ran out of ids');
+          out.push(last);
+        }
+        return out;
+      };
+
+      // The sequences are built by repeated allocation, not read from the vector: the vector
+      // lists the expected ids and deriving the actual ones is what proves the allocator.
+      const controller = build(v.expected_controller_sequence.length, true);
+      const agent = build(v.expected_agent_sequence.length, false);
+
+      expect(
+        controller.join(',') === v.expected_controller_sequence.join(','),
+        `${v.id} controller sequence is ${v.expected_controller_sequence.join(',')} (got ${controller.join(',')})`,
+      );
+      expect(
+        agent.join(',') === v.expected_agent_sequence.join(','),
+        `${v.id} agent sequence is ${v.expected_agent_sequence.join(',')} (got ${agent.join(',')})`,
+      );
+
+      // The partition: the two sides never propose the same id, which is what makes
+      // allocation lock-free. A reject-and-retry scheme would need a round trip per channel.
+      const overlap = controller.filter((c) => agent.includes(c));
+      expect(overlap.length === 0, `${v.id} the two sides never propose the same id (overlap: ${overlap.join(',')})`);
+
+      // Neither reaches channel 0, the control channel.
+      expect(!controller.includes(0) && !agent.includes(0), `${v.id} the control channel is never allocated`);
+
+      // The parity invariant, over every element rather than the example.
+      for (const odd of controller) expect(odd % 2 === 1, `${v.id} ${odd} is odd`);
+      for (const even of agent) expect(even % 2 === 0, `${v.id} ${even} is even`);
+    } else if (v.id === 'negotiate.channel-id-reuse-requires-close') {
+      const open = new Set(v.open_channels);
+      expect(open.has(v.reopen_request), `${v.id} the reopen target must already be open`);
+
+      const verdict = openChannel(v.reopen_request, open, DEFAULT_LIMITS.max_channels);
+
+      expect(verdict.accepted === false, `${v.id} an open channel is not reopened`);
+
+      // The fault is a state error specifically, and the code matters: a limit error would
+      // suggest retrying, when the correct response is to close the channel first, and a
+      // retry would loop forever against the same open id.
+      expect(verdict.error === v.expected_error, `${v.id} error is ${v.expected_error} (got ${verdict.error})`);
+
+      const fresh = openChannel(3, open, DEFAULT_LIMITS.max_channels);
+      expect(fresh.accepted === true, `${v.id} an unopened id is accepted`);
+    } else {
+      throw new Error(`unhandled direction vector ${v.id}`);
+    }
+  }
+}
+
+// ---- CapabilityNegotiationTest.theChannelLimitCountsTheControlChannel ----------
+{
+  const max = DEFAULT_LIMITS.max_channels;
+  const atLimit = new Set(Array.from({ length: max }, (_, i) => i));
+
+  // Channels 0 through 7 is eight channels against a limit of eight. Counting only data
+  // channels would see seven and allow a ninth -- the off-by-one this pins.
+  expect(atLimit.size === max, 'the scenario is exactly at the limit');
+
+  const refused = openChannel(100, atLimit, max);
+  expect(refused.accepted === false, 'opening past the limit is refused');
+  expect(refused.error === 'ERR_CHANNEL_LIMIT', `the fault is a limit, not a state (got ${refused.error})`);
+
+  const oneBelow = new Set([...atLimit].filter((c) => c !== max - 1));
+  expect(openChannel(100, oneBelow, max).accepted === true, 'one below the limit is accepted');
+}
+
+// ---- CapabilityNegotiationTest.captureNeverUpscalesASmallerScreen ---------------
+{
+  // No vector exercises the scale-down-only guard: in both video vectors the scale factor is
+  // below one, so the guard is inert and removing it changes neither result. Mutation-testing
+  // found that -- deleting the guard left every check green. The rule is still a rule, so it
+  // is checked directly here. A check no input can reach is not a check.
+  // A ceiling above the screen on BOTH axes, so the scale factor exceeds one and the guard is
+  // what stops it. A ceiling larger on one axis only still gives a scale below one and scales
+  // down, so it never reaches the guard -- which is what the first version of this check got
+  // wrong, asserting 720x1280 against an input that legitimately scales to 608x1080.
+  const bigCeiling = { max_video_width: 3840, max_video_height: 2160, max_video_fps: 60 };
+  const small = clampVideo(3840, 2160, 60, bigCeiling, 720, 1280);
+
+  expect(small.width === 720, `a screen smaller than the ceiling on both axes keeps its width (got ${small.width})`);
+  expect(small.height === 1280, `a screen smaller than the ceiling on both axes keeps its height (got ${small.height})`);
+
+  const scaled = clampVideo(360, 640, 60, DEFAULT_LIMITS, 720, 1280);
+
+  expect(scaled.width === 360, `a ceiling smaller than the screen scales it down (got ${scaled.width})`);
+  expect(scaled.height === 640, `both axes scale together (got ${scaled.height})`);
+
+  const screenRatio = 720 / 1280;
+  const scaledRatio = scaled.width / scaled.height;
+
+  expect(
+    Math.abs(screenRatio - scaledRatio) < 0.01,
+    `the scaled result keeps the screen's ratio (${scaledRatio.toFixed(4)} vs ${screenRatio.toFixed(4)})`,
+  );
+}
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
