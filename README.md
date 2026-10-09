@@ -393,7 +393,7 @@ its arithmetic is reimplemented in JavaScript within the gate and run against th
 vector files. This is evidence for the Kotlin's *logic* and never for its compilation:
 
 ```text
-ok    990 Kotlin-mirrored checks hold against the real vectors
+ok    1461 Kotlin-mirrored checks hold against the real vectors
 ok    framing decode, prefix arithmetic, round-trip, AAD and reserved flags
 ok    cbOR shortest-encoding boundaries and the canonical empty body
 ok    all 22 malformed vectors and all 3 sequence vectors classify as declared
@@ -406,9 +406,9 @@ fails if the gate does not notice. A check that cannot fail is worse than no che
 because it reports coverage of a rule nothing is testing:
 
 ```text
-ok    baseline passes with 990 checks
-ok    47 mutations declared
-ok    all 47 mutations caught
+ok    baseline passes with 1461 checks
+ok    63 mutations declared
+ok    all 63 mutations caught
 ok    the gate passes again after restoring
 ```
 
@@ -419,6 +419,14 @@ ascending key order could not fail, because the fields in the vector file are wr
 an order that is already sorted. Seven of the session state machine's transition guards
 survived as well, including the sequence-advance rule. Each of them *looked* covered until
 a mutation survived.
+
+The shell policy's path check was the same lesson in reverse. It tested four things, and
+mutation testing showed that three of them changed no answer for ANY input: once the
+executable's directory is compared for equality against the vetted list, a relative path, a
+traversal path and a doubled slash all name a directory that is not on that list, so the
+comparison refuses them without help. The three were deleted rather than kept, because a guard
+that no input can distinguish from its absence is one that will silently stop working the day
+the comparison changes.
 
 **6. README consistency check** — reads the numbers out of this file and fails if they
 no longer match the run (43 checks):

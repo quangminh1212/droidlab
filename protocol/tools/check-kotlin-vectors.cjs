@@ -3882,6 +3882,892 @@ function receiveVerdict(replayer, messageType, sequenceNumber, encrypted, channe
   expect(refusedPlainAuth, 'an unencrypted AUTH is refused');
 }
 
+
+// ---------------------------------------------------------------------------
+// ShellPolicy  --  mirror of ShellPolicy.kt
+// ---------------------------------------------------------------------------
+
+const SHELL_VETTED_DIRECTORIES = ['/system/bin/', '/system/xbin/'];
+const SHELL_MAX_COMMAND_LINE_BYTES = 4096;
+const SHELL_OUTPUT_CAP_BYTES = 4194304;
+const SHELL_REJECTIONS_BEFORE_SUSPENSION = 20;
+
+/**
+ * Mirror of ShellPolicy.isVettedPath.
+ *
+ * The path is separated into its directory and its basename, and the DIRECTORY is compared for
+ * EQUALITY against the vetted list. That is the whole rule, and it is deliberately two tests and
+ * no more.
+ *
+ * The longer version this replaced checked four things: that the path was absolute, that its
+ * basename was not `.`/`..`/empty, that it contained no `..` segment, and that it contained no
+ * double slash. Driving every one of them showed that three were unreachable: once the directory
+ * is compared for equality, a relative path, a traversal path and a doubled slash all name a
+ * directory that is not a vetted one, so the comparison refuses them without any help. Only the
+ * basename test changed an answer, and only for a path like `/system/bin/`, whose directory IS
+ * vetted but whose basename is empty. The redundant three were removed rather than kept as
+ * decoration, because a guard no input can distinguish from its absence is a guard that will
+ * silently stop working the day the comparison changes.
+ *
+ * Nothing here resolves the path. Resolving is exactly what an attacker wants:
+ * `/system/bin/../../data/local/tmp/payload` resolves into a vetted directory and then out of it,
+ * and a resolver with a bug is a check with a bug. Comparing the LITERAL directory segment cannot
+ * be walked past, because `..` is a directory name that is not on the vetted list.
+ */
+function isVettedPath(executable) {
+  const lastSlash = executable.lastIndexOf('/');
+
+  // There must be a directory to compare, and something after it. A path with no separator
+  // (`getprop`) or a separator at position zero (`/getprop`) has no vetted directory.
+  if (lastSlash <= 0) return false;
+
+  const directory = executable.slice(0, lastSlash + 1);
+  const basename = executable.slice(lastSlash + 1);
+
+  // The basename must name a program. `.` and `..` name directories, and an empty basename means
+  // the path ended at a separator -- which matters because `/system/bin/` has a vetted DIRECTORY
+  // and would otherwise be accepted as an executable.
+  if (basename === '' || basename === '.' || basename === '..') return false;
+
+  // The comparison is for EQUALITY on the directory, not `startsWith` on the whole path. A
+  // `startsWith` test accepts `/system/binfoo/bar`, whose leading characters merely spell a
+  // vetted directory, and accepts the vetted directory itself.
+  return SHELL_VETTED_DIRECTORIES.includes(directory);
+}
+
+/** Mirror of ShellPolicy.commandLineLength. */
+function commandLineLength(executable, args) {
+  return (
+    Buffer.byteLength(executable, 'utf8') +
+    args.reduce((total, argument) => total + Buffer.byteLength(argument, 'utf8'), 0) +
+    args.length
+  );
+}
+
+/**
+ * Mirror of ShellPolicy.signatureMatches: the executable and the literal argv prefix.
+ *
+ * This is what identifies the rule, so its failure means no rule applies.
+ */
+function ruleSignatureMatches(rule, executable, args) {
+  if (rule.exe !== executable) return false;
+  if (args.length < rule.argv_prefix.length) return false;
+
+  for (let index = 0; index < rule.argv_prefix.length; index++) {
+    if (args[index] !== rule.argv_prefix[index]) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Mirror of ShellPolicy.argumentsMatch: the count and the patterns.
+ *
+ * Only reached once a rule's signature has matched, so a failure here is argument_rejected.
+ */
+function ruleArgumentsMatch(rule, executable, args) {
+  if (!ruleSignatureMatches(rule, executable, args)) return false;
+
+  const rest = args.slice(rule.argv_prefix.length);
+  if (rest.length > rule.max_args) return false;
+
+  for (let index = 0; index < rest.length; index++) {
+    const pattern = rule.arg_patterns[index];
+    if (pattern === undefined) return false;
+    if (!new RegExp(pattern).test(rest[index])) return false;
+  }
+
+  return true;
+}
+
+/** Both halves, for a caller that wants the whole answer. */
+function ruleMatches(rule, executable, args) {
+  return ruleSignatureMatches(rule, executable, args) && ruleArgumentsMatch(rule, executable, args);
+}
+
+/**
+ * A rule's mutability is not in the vector file: it is derivable from the rule id, which the
+ * registry convention makes explicit. `dev.*` rules mutate; `sys.*` rules do not. Stated here
+ * rather than inlined so the assumption is visible and checkable.
+ */
+function ruleIsMutating(rule) {
+  // Accepts a rule object or a bare id, so a check that only has the id can use it.
+  const id = typeof rule === 'string' ? rule : rule.id;
+  return id.startsWith('dev.');
+}
+
+/** Mirror of ShellPolicy.evaluate. */
+function shellEvaluate(context, rules, executable, args) {
+  // 1. The operator's grant, first and alone.
+  if (!context.shell_granted) {
+    return { allowed: false, error: 'ERR_PERMISSION_DENIED', reason: 'denied_by_operator' };
+  }
+
+  const basename = executable.includes('/') ? executable.slice(executable.lastIndexOf('/') + 1) : executable;
+
+  // 2. The deny list, by BASENAME, before any rule matching. An EMPTY basename is not a deny
+  //    entry -- it is refused by the path check below, as not_in_allow_list. My first version
+  //    folded the empty case in here and reported deny_listed, which names a deny rule that does
+  //    not exist.
+  if (context.denied_rules.includes(basename)) {
+    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'deny_listed' };
+  }
+
+  // 3. The path must be absolute and in a vetted directory.
+  if (!isVettedPath(executable)) {
+    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'not_in_allow_list' };
+  }
+
+  // 4. The command line cap, before a pattern is applied.
+  if (commandLineLength(executable, args) > (context.max_command_line_bytes || SHELL_MAX_COMMAND_LINE_BYTES)) {
+    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'argument_rejected' };
+  }
+
+  // 5. The allow list for this context, filtered by the LEVEL, and identified by the RULE --
+  //    which includes its argv prefix. The prefix is part of what makes a rule that rule, not
+  //    part of its argument checking: `dumpsys window2` does not match the `window` rule, and no
+  //    other rule for `dumpsys` applies, so NO RULE APPLIES and the verdict is
+  //    not_in_allow_list. Reporting argument_rejected here would say a rule applied and its
+  //    argument was wrong, which is a different fact with a different remedy.
+  const permits = (mutating) => !mutating || context.allow_level === 'read_write';
+
+  const applicable = rules.filter(
+    (rule) =>
+      context.allowed_rules.includes(rule.id) &&
+      permits(ruleIsMutating(rule)) &&
+      ruleSignatureMatches(rule, executable, args),
+  );
+
+  if (applicable.length === 0) {
+    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'not_in_allow_list' };
+  }
+
+  // 6. A rule applies, so its ARGUMENTS are now checked against its patterns. Only here does a
+  //    mismatch become argument_rejected.
+  const matched = applicable.find((rule) => ruleArgumentsMatch(rule, executable, args));
+
+  if (matched === undefined) {
+    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'argument_rejected' };
+  }
+
+  return { allowed: true, rule: matched.id };
+}
+
+/** Mirror of ShellPolicy.retainedOutputBytes / isTruncated. */
+function retainedOutputBytes(produced) {
+  return Math.min(produced, SHELL_OUTPUT_CAP_BYTES);
+}
+function isOutputTruncated(produced) {
+  return produced > SHELL_OUTPUT_CAP_BYTES;
+}
+
+// ---- ShellPolicyTest: the rules and contexts are the file's own ----------------
+{
+  const file = load('shell-policy.json');
+
+  expect((file.rules || []).length === 25, 'the file declares 25 rules (got ' + (file.rules || []).length + ')');
+  expect((file.cases || []).length === 23, 'the file declares 23 cases (got ' + (file.cases || []).length + ')');
+  expect((file.lifecycle_vectors || []).length === 5, 'the file declares 5 lifecycle vectors');
+
+  // Every rule names an absolute executable in a vetted directory. Asserted for all 25 rather
+  // than for the ones a case happens to reach, because a rule with an unvetted path is a rule
+  // that can never fire -- and it would sit there looking like a permission that does not work.
+  for (const rule of file.rules) {
+    expect(rule.exe.startsWith('/'), 'the rule "' + rule.id + '" names an absolute path');
+    expect(isVettedPath(rule.exe), 'the rule "' + rule.id + '" names a vetted path (' + rule.exe + ')');
+    expect(rule.max_args === rule.arg_patterns.length || rule.arg_patterns.length === 0, 'the rule "' + rule.id + '" declares a pattern per permitted argument or none');
+    expect(rule.timeout_ms > 0, 'the rule "' + rule.id + '" has a positive deadline');
+  }
+
+  // The rule ids are unique, so the audit log's rule_id identifies one rule.
+  const ids = file.rules.map((r) => r.id);
+  expect(new Set(ids).size === ids.length, 'the rule ids are unique');
+
+  // Every context names only rules that exist, and every denied basename is a basename.
+  const contextNames = Object.keys(file.policy_contexts);
+  expect(contextNames.length === 4, 'the file declares 4 contexts');
+  expect(contextNames.join(',') === 'default,app_control_grant,no_grant,mutating_grant', 'the context names are the four the cases use (got ' + contextNames.join(',') + ')');
+
+  for (const [name, context] of Object.entries(file.policy_contexts)) {
+    for (const ruleId of context.allowed_rules) {
+      expect(ids.includes(ruleId), 'the context "' + name + '" names a rule that exists (' + ruleId + ')');
+    }
+    for (const denied of context.denied_rules) {
+      expect(!denied.includes('/'), 'the context "' + name + '" denies a BASENAME, not a path (' + denied + ')');
+    }
+    expect(context.allow_stdin === false, 'the context "' + name + '" allows no stdin, because there is no shell');
+    expect(context.max_command_line_bytes === SHELL_MAX_COMMAND_LINE_BYTES, 'the context "' + name + '" uses the declared cap');
+  }
+
+  // The mutability is derivable and consistent: every dev.* rule is mutating and every sys.*
+  // rule is not, and both prefix families are present. This is the assumption the level gate
+  // rests on, so it is asserted rather than assumed.
+  const devRules = file.rules.filter((r) => r.id.startsWith('dev.')).map((r) => r.id);
+  const sysRules = file.rules.filter((r) => r.id.startsWith('sys.')).map((r) => r.id);
+
+  expect(devRules.length > 0, 'there are mutating rules');
+  expect(sysRules.length > 0, 'there are read-only rules');
+  expect(devRules.length + sysRules.length === file.rules.length, 'every rule is either dev.* or sys.*');
+  expect(devRules.every(ruleIsMutating), 'every dev.* rule is mutating');
+  expect(sysRules.every((id) => !ruleIsMutating({ id })), 'no sys.* rule is mutating');
+}
+
+// ---- ShellPolicyTest.everyCaseProducesItsDeclaredVerdict ----------------------
+{
+  const file = load('shell-policy.json');
+
+  for (const kase of file.cases) {
+    if (!kase.context) continue;
+
+    const context = file.policy_contexts[kase.context];
+    if (!context) throw new Error('case "' + kase.id + '" names an unknown context "' + kase.context + '"');
+
+    const verdict = shellEvaluate(context, file.rules, kase.exe, kase.args || []);
+
+    if (kase.expected === 'allowed') {
+      expect(verdict.allowed, 'case "' + kase.id + '" is allowed (got ' + (verdict.allowed ? 'allowed' : verdict.reason) + ')');
+      expect(verdict.rule === kase.expected_rule, 'case "' + kase.id + '" resolves to ' + kase.expected_rule + ' (got ' + verdict.rule + ')');
+    } else if (kase.expected === 'rejected') {
+      expect(!verdict.allowed, 'case "' + kase.id + '" is rejected (got allowed via ' + (verdict.rule || '?') + ')');
+      expect(verdict.error === kase.expected_error, 'case "' + kase.id + '" has error ' + kase.expected_error + ' (got ' + verdict.error + ')');
+      expect(
+        verdict.reason === kase.expected_reason,
+        'case "' + kase.id + '" has reason ' + kase.expected_reason + ' (got ' + verdict.reason + ')',
+      );
+    }
+  }
+}
+
+// ---- ShellPolicyTest.theLevelGateIsSeparateFromTheAllowList -------------------
+{
+  const file = load('shell-policy.json');
+
+  // force-stop is allow-listed for app_control_grant and refused under `default`, at the SAME
+  // read_only level. The two contexts differ in their allow lists, not in their levels, so this
+  // pair shows the allow list working.
+  const withGrant = shellEvaluate(
+    file.policy_contexts.app_control_grant,
+    file.rules,
+    '/system/bin/am',
+    ['force-stop', 'com.example.app'],
+  );
+  const withoutGrant = shellEvaluate(
+    file.policy_contexts.default,
+    file.rules,
+    '/system/bin/am',
+    ['force-stop', 'com.example.app'],
+  );
+
+  expect(withGrant.allowed, 'force-stop is allowed under app_control_grant');
+  expect(!withoutGrant.allowed, 'force-stop is refused under default');
+  expect(withoutGrant.reason === 'not_in_allow_list', 'and the reason is not_in_allow_list, not argument_rejected');
+
+  // The same reason for the settings case: the write rule is not in the default context's list at
+  // all, so no rule applies. Asserted alongside for the contrast with the argument case below,
+  // which IS argument_rejected because a rule did apply.
+  const writeUnderDefault = shellEvaluate(
+    file.policy_contexts.default,
+    file.rules,
+    '/system/bin/settings',
+    ['put', 'system', 'screen_brightness', '0'],
+  );
+
+  expect(!writeUnderDefault.allowed, 'the settings write is refused under default');
+  expect(writeUnderDefault.reason === 'not_in_allow_list', 'and its reason is not_in_allow_list, because no rule applies');
+
+  // The SAME command line with the SAME allow list but a read_only level is refused, which is the
+  // level gate on its own. The remedy differs from a missing allow-list entry, so the reason code
+  // is asserted to be the allow-list one -- a mutating rule in a read_only context is simply not
+  // in that context's list.
+  const readOnlyCopy = { ...file.policy_contexts.app_control_grant, allow_level: 'read_only' };
+  const levelRefused = shellEvaluate(readOnlyCopy, file.rules, '/system/bin/settings', ['put', 'system', 'screen_brightness', '0']);
+
+  expect(!levelRefused.allowed, 'a mutating rule under read_only is refused');
+  expect(levelRefused.reason === 'not_in_allow_list', 'and the reason is not_in_allow_list, because the level removes it from the list');
+
+  // Lifting the level to read_write allows the same line, so the level is the only difference.
+  const readWrite = { ...file.policy_contexts.app_control_grant, allow_level: 'read_write' };
+  const allowed = shellEvaluate(readWrite, file.rules, '/system/bin/settings', ['put', 'system', 'screen_brightness', '0']);
+
+  expect(allowed.allowed, 'the same line is allowed at read_write');
+  expect(allowed.rule === 'dev.settings.put', 'and resolves to dev.settings.put');
+}
+
+// ---- ShellPolicyTest.theDenyListWinsAndIsCheckedFirst ------------------------
+{
+  const file = load('shell-policy.json');
+
+  // Every deny-listed case gives deny_listed, including a path under a vetted directory.
+  const denyCases = file.cases.filter((c) => c.expected_reason === 'deny_listed');
+  expect(denyCases.length === 4, 'there are four deny-listed cases (got ' + denyCases.length + ')');
+
+  for (const kase of denyCases) {
+    const context = { ...file.policy_contexts[kase.context], allowed_rules: file.rules.map((r) => r.id) };
+
+    // With EVERY rule allowed, a deny-listed executable is STILL refused. That is what makes the
+    // deny list a deny list rather than a tie-break.
+    const verdict = shellEvaluate(context, file.rules, kase.exe, kase.args || []);
+
+    expect(!verdict.allowed, 'the deny-listed "' + kase.exe + '" is refused even with every rule allowed');
+    expect(verdict.reason === 'deny_listed', 'and the reason is deny_listed (got ' + verdict.reason + ')');
+  }
+
+  // The deny list is by BASENAME: the same binary at a different path is still denied.
+  const context = { ...file.policy_contexts.default, allowed_rules: file.rules.map((r) => r.id) };
+  const sameBasenameElsewhere = shellEvaluate(context, file.rules, '/system/xbin/rm', []);
+
+  expect(!sameBasenameElsewhere.allowed, 'a deny-listed basename is denied at another path too');
+  expect(sameBasenameElsewhere.reason === 'deny_listed', 'and the reason is deny_listed, because the basename is what is denied');
+}
+
+// ---- ShellPolicyTest.aShellInterpreterIsNeverUsed ----------------------------
+{
+  const file = load('shell-policy.json');
+
+  // The shell-interpreter case passes a full command string as an argument. It is refused, and
+  // the executable is what is refused -- not the string. Stated as an assertion because it is the
+  // design decision the whole policy rests on.
+  const kase = file.cases.find((c) => c.id === 'shell.deny.shell-interpreter');
+
+  expect(!!kase, 'the shell-interpreter case exists');
+  expect(kase.exe === '/system/bin/sh', 'the vector names sh itself as the executable');
+  expect(kase.args[0] === '-c', 'and passes the command with -c, which is what a shell call looks like');
+
+  const verdict = shellEvaluate(file.policy_contexts.default, file.rules, kase.exe, kase.args);
+
+  expect(!verdict.allowed, 'a shell is refused');
+  expect(verdict.reason === 'deny_listed', 'and it is the EXECUTABLE that is denied, not the string parsed');
+
+  // And every interpreter a device is likely to have is on the deny list, so no argument vector
+  // can reach one through a rule.
+  for (const interpreter of ['sh', 'bash', 'dash', 'busybox']) {
+    expect(file.policy_contexts.default.denied_rules.includes(interpreter), interpreter + ' is deny-listed');
+  }
+
+  // No rule anywhere uses an interpreter as its executable.
+  for (const rule of file.rules) {
+    expect(
+      !['sh', 'bash', 'dash', 'busybox', 'toybox'].some((i) => rule.exe.endsWith('/' + i)),
+      'the rule "' + rule.id + '" does not use an interpreter',
+    );
+  }
+}
+
+// ---- ShellPolicyTest.aRejectedArgumentIsNotExpanded --------------------------
+{
+  const file = load('shell-policy.json');
+
+  // The argument "ro.build.version;id" is refused. The note is explicit that no metacharacter
+  // expansion happens: the argument simply does not match the pattern.
+  const kase = file.cases.find((c) => c.id === 'shell.deny.argument-rejected');
+
+  expect(kase.args[0] === 'ro.build.version;id', 'the vector passes a semicolon in the argument');
+
+  const verdict = shellEvaluate(file.policy_contexts.default, file.rules, kase.exe, kase.args);
+
+  expect(!verdict.allowed, 'the argument is refused');
+  expect(verdict.reason === 'argument_rejected', 'and the reason is argument_rejected');
+
+  // The pattern really does reject it, and for the reason the note gives rather than because a
+  // sanitiser ran: the pattern is anchored and does not permit a semicolon.
+  const rule = file.rules.find((r) => r.id === 'sys.getprop');
+
+  expect(!new RegExp(rule.arg_patterns[0]).test('ro.build.version;id'), 'the pattern rejects the semicolon');
+  expect(new RegExp(rule.arg_patterns[0]).test('ro.build.version'), 'and accepts the clean argument');
+  expect(rule.arg_patterns[0].startsWith('^') && rule.arg_patterns[0].endsWith('$'), 'the pattern is anchored, so a prefix match cannot smuggle a suffix');
+}
+
+// ---- ShellPolicyTest.theVettedPathRuleRejectsTraversal ----------------------
+{
+  const file = load('shell-policy.json');
+
+  for (const kase of file.cases.filter((c) => c.expected_reason === 'not_in_allow_list')) {
+    if (kase.exe.includes('..')) {
+      expect(!isVettedPath(kase.exe), 'the traversal path "' + kase.exe + '" is not vetted');
+      expect(kase.exe.includes('..'), 'the vector really does contain a traversal segment');
+    }
+  }
+
+  // The traversal path in the vector is reachable-looking: it STARTS with a vetted directory, so
+  // a check written as a simple prefix test would accept it.
+  const traversal = file.cases.find((c) => c.id === 'shell.deny.path-traversal');
+
+  expect(!!traversal, 'the path-traversal case exists');
+  expect(traversal.exe.startsWith('/system/bin/'), 'the traversal path starts with a vetted directory, so a prefix check alone accepts it');
+  expect(!isVettedPath(traversal.exe), 'and the traversal check refuses it');
+
+  // A relative path is refused, because the working directory must never select the binary.
+  const relative = file.cases.find((c) => c.id === 'shell.deny.relative-path');
+  expect(!!relative, 'the relative-path case exists');
+  expect(!relative.exe.startsWith('/'), 'the vector names a bare name');
+  expect(!isVettedPath(relative.exe), 'and a relative path is refused');
+
+  // A double slash is refused rather than normalised.
+  expect(!isVettedPath('/system/bin//getprop'), 'a double slash is refused');
+
+  // And the vetted directories really do accept their own paths.
+  expect(isVettedPath('/system/bin/getprop'), 'a vetted path is accepted');
+  expect(isVettedPath('/system/xbin/su'), 'a vetted path is accepted even for a deny-listed name, because the path check is not the deny check');
+  expect(!isVettedPath('/data/local/tmp/payload'), 'an unvetted directory is refused');
+  expect(!isVettedPath(''), 'an empty path is refused');
+}
+
+// ---- ShellPolicyTest.theCommandLineCapBoundsTheWork -----------------------
+{
+  const file = load('shell-policy.json');
+
+  // The regex-bomb case has both a pathological argument AND a time bound. The cap is what
+  // rejects it, in bounded time, without depending on the regex engine's backtracking behaviour.
+  const bomb = file.cases.find((c) => c.id === 'shell.deny.regex-bomb');
+
+  expect(!!bomb, 'the regex-bomb case exists');
+  expect(bomb.max_decision_time_ms === 50, 'and it declares a decision-time bound');
+  expect(bomb.expected_reason === 'argument_rejected', 'and expects argument_rejected');
+
+  const started = Date.now();
+  const verdict = shellEvaluate(file.policy_contexts.default, file.rules, bomb.exe, bomb.args);
+  const elapsed = Date.now() - started;
+
+  expect(!verdict.allowed, 'the pathological argument is refused');
+  expect(elapsed < bomb.max_decision_time_ms, 'and refused within the declared bound (' + elapsed + 'ms < ' + bomb.max_decision_time_ms + 'ms)');
+
+  // The command-line-too-long case is named for the cap, but it does NOT exceed it: the argument
+  // is 1392 characters and the whole command line is 1412 bytes against a 4096 cap. What rejects
+  // it is the rule's own per-argument pattern, whose quantifier allows 64. I had asserted the cap
+  // was what fired, and the mirror said otherwise.
+  const tooLong = file.cases.find((c) => c.id === 'shell.deny.command-line-too-long');
+  expect(!!tooLong, 'the command-line-too-long case exists');
+
+  const length = commandLineLength(tooLong.exe, tooLong.args);
+  expect(length <= SHELL_MAX_COMMAND_LINE_BYTES, 'the vector does NOT exceed the cap (' + length + ' <= ' + SHELL_MAX_COMMAND_LINE_BYTES + ')');
+
+  const getprop = file.rules.find((r) => r.id === 'sys.getprop');
+  expect(!new RegExp(getprop.arg_patterns[0]).test(tooLong.args[0]), 'the per-argument pattern is what rejects it');
+  expect(tooLong.args[0].length > 64, 'because the argument is longer than the pattern allows (' + tooLong.args[0].length + ' > 64)');
+
+  // The cap still has to bite for a command line that really does exceed it. Driven directly,
+  // because no vector does: every case is rejected by a pattern first.
+  const oversized = 'A'.repeat(SHELL_MAX_COMMAND_LINE_BYTES);
+
+  expect(
+    commandLineLength('/system/bin/getprop', [oversized]) > SHELL_MAX_COMMAND_LINE_BYTES,
+    'an oversized command line exceeds the cap',
+  );
+  expect(
+    shellEvaluate(file.policy_contexts.default, file.rules, '/system/bin/getprop', [oversized]).reason === 'argument_rejected',
+    'and an oversized command line is argument_rejected',
+  );
+}
+
+// ---- ShellPolicyTest.theMutabilitySplitIsByRuleNotByExecutable ---------------
+{
+  const file = load('shell-policy.json');
+
+  // `settings get` and `settings put` share ONE executable and differ in mutability, so the split
+  // is by rule rather than by binary. This is asserted as a property of the file, because it is
+  // the reason the level gate is expressed over rules.
+  const settingsRules = file.rules.filter((r) => r.exe === '/system/bin/settings');
+  expect(settingsRules.length === 2, 'settings has exactly two rules');
+  expect(settingsRules.some((r) => r.id === 'sys.settings.get'), 'one is sys.settings.get, the read half');
+  expect(settingsRules.some((r) => r.id === 'dev.settings.put'), 'one is dev.settings.put, the write half');
+
+  const read = settingsRules.find((r) => r.id === 'sys.settings.get');
+  const write = settingsRules.find((r) => r.id === 'dev.settings.put');
+
+  expect(!ruleIsMutating(read), 'the read half is not mutating');
+  expect(ruleIsMutating(write), 'the write half is mutating');
+
+  // Which is why BOTH are in the read-only context's list: the mutating one is filtered out by
+  // the level rather than being absent from the list.
+  expect(
+    file.policy_contexts.default.allowed_rules.includes('sys.settings.get'),
+    'the read half is in the default allow list',
+  );
+  expect(
+    !file.policy_contexts.default.allowed_rules.includes('dev.settings.put'),
+    'the write half is not, and the reason is its mutability',
+  );
+
+  // And the two argument vectors are genuinely different rules, not one rule with a flag.
+  expect(
+    JSON.stringify(read.argv_prefix) !== JSON.stringify(write.argv_prefix),
+    'the two halves are distinguished by their argv prefix',
+  );
+}
+
+// ---- ShellPolicyTest.theGrantIsRecheckedPerExecution -------------------------
+{
+  const file = load('shell-policy.json');
+  const vector = file.lifecycle_vectors.find((v) => v.id === 'shell.grant-revoked-mid-session');
+
+  expect(!!vector, 'the grant-revocation vector exists');
+  expect(vector.sequence.length === 3, 'it has three steps');
+
+  const [first, revoke, second] = vector.sequence;
+
+  expect(first.expected === 'allowed', 'the first execution is allowed');
+  expect(revoke.step === 'operator_revokes_shell_grant', 'the middle step revokes the grant');
+
+  // The SAME pairing and the SAME command line before and after. The grant is what changed, so
+  // the verdict differs, which is the whole point: checking the grant at connection time would
+  // let a revoked operator's next command through.
+  expect(first.exe === second.exe, 'both executions use the same executable');
+  expect(JSON.stringify(first.args) === JSON.stringify(second.args), 'and the same arguments');
+
+  const granted = { ...file.policy_contexts.default, allowed_rules: file.rules.map((r) => r.id) };
+  const revoked = { ...granted, shell_granted: false };
+
+  expect(shellEvaluate(granted, file.rules, first.exe, first.args).allowed, 'the first execution is allowed');
+  expect(!shellEvaluate(revoked, file.rules, second.exe, second.args).allowed, 'the second is refused on the same session');
+  expect(
+    shellEvaluate(revoked, file.rules, second.exe, second.args).error === 'ERR_PERMISSION_DENIED',
+    'and the fault is a permission denial, which is what an operator can act on',
+  );
+
+  // A revoked grant is checked BEFORE the allow list, so the reason is denied_by_operator even
+  // for a command that would otherwise be perfectly legal.
+  expect(
+    shellEvaluate(revoked, file.rules, second.exe, second.args).reason === 'denied_by_operator',
+    'and the reason names the operator rather than the rule',
+  );
+}
+
+// ---- ShellPolicyTest.theRemainingLifecycleVectors --------------------------
+{
+  const file = load('shell-policy.json');
+
+  // The rate limit counts REJECTIONS, not commands.
+  const limit = file.lifecycle_vectors.find((v) => v.id === 'shell.rate-limit-after-repeated-rejections');
+
+  expect(!!limit, 'the rate-limit vector exists');
+  expect(limit.rejections_within_window === SHELL_REJECTIONS_BEFORE_SUSPENSION, 'the threshold matches the code');
+  expect(limit.suspend_s === 300, 'the suspension lasts five minutes');
+  expect(limit.expected === 'suspended', 'and the expected state is suspended');
+  expect(limit.expected_error === 'ERR_PERMISSION_DENIED', 'with a permission denial, not a rate error');
+  expect(limit.window_s === 60, 'counted over sixty seconds');
+
+  // Output over the cap is truncated, not refused.
+  const truncated = file.lifecycle_vectors.find((v) => v.id === 'shell.output-truncated');
+
+  expect(!!truncated, 'the truncation vector exists');
+  expect(isOutputTruncated(truncated.output_bytes), 'the vector really exceeds the cap');
+  expect(retainedOutputBytes(truncated.output_bytes) === truncated.output_cap_bytes, 'exactly the cap is retained');
+  expect(truncated.expected_flag === true, 'and the truncated flag is set');
+  expect(!isOutputTruncated(truncated.output_cap_bytes), 'output exactly at the cap is not truncated');
+  expect(!isOutputTruncated(1024), 'a small output is not truncated');
+
+  // A timeout kills the process GROUP and reports 137.
+  const timeout = file.lifecycle_vectors.find((v) => v.id === 'shell.timeout-kills-process-group');
+
+  expect(!!timeout, 'the timeout vector exists');
+  expect(timeout.expected_exit_code === 137, 'the exit code is 137');
+  expect(timeout.expected_exit_code === 128 + 9, 'which is 128 + SIGKILL, not a bare failure');
+  expect(timeout.expected_truncated === true, 'and the output is flagged as truncated, because it was cut short');
+
+  // The audit log carries BLOCKED commands as well as executed ones.
+  const audit = file.lifecycle_vectors.find((v) => v.id === 'shell.audit-log-contains-blocked');
+
+  expect(!!audit, 'the audit vector exists');
+  expect(audit.required_audit_fields.includes('blocked'), 'an entry records whether it was blocked');
+  expect(audit.required_audit_fields.includes('rule_id'), 'and which rule decided it');
+  expect(audit.required_audit_fields.includes('controller_fingerprint'), 'and which controller asked');
+  expect(audit.min_retained_entries === 500, 'and at least 500 entries are retained');
+}
+
+// ---- ShellPolicyTest.everyContextRefusesWhenNoGrant ------------------------
+{
+  const file = load('shell-policy.json');
+
+  // The no_grant context has an EMPTY allow list and no shell. Every case under it is refused
+  // with denied_by_operator rather than not_in_allow_list, which is the ordering that matters:
+  // the grant is checked first, so a disabled pairing reports the fact the operator can fix.
+  const noGrant = file.policy_contexts.no_grant;
+
+  expect(noGrant.shell_granted === false, 'the no_grant context has no shell');
+  expect(noGrant.allowed_rules.length === 0, 'and an empty allow list');
+
+  // Even a fully allow-listed command is refused.
+  const verdict = shellEvaluate(noGrant, file.rules, '/system/bin/getprop', ['ro.build.version.sdk']);
+
+  expect(!verdict.allowed, 'a legal command is refused when there is no grant');
+  expect(verdict.error === 'ERR_PERMISSION_DENIED', 'the fault is a permission denial');
+  expect(verdict.reason === 'denied_by_operator', 'and the reason names the operator');
+
+  // And the same command IS allowed under a grant, so the grant is the only difference.
+  expect(
+    shellEvaluate(file.policy_contexts.default, file.rules, '/system/bin/getprop', ['ro.build.version.sdk']).allowed,
+    'the same command is allowed under a grant',
+  );
+
+  // Every context that HAS a grant either allows or refuses; none is left undecided.
+  for (const [name, context] of Object.entries(file.policy_contexts)) {
+    if (!context.shell_granted) continue;
+
+    const result = shellEvaluate(context, file.rules, '/system/bin/getprop', ['ro.build.version.sdk']);
+
+    expect(
+      result.allowed || result.reason !== undefined,
+      'the context "' + name + '" produces a decided verdict',
+    );
+  }
+}
+
+// ---- ShellPolicyTest.theArgumentCountAndPatternsAreEnforced -----------------
+{
+  const file = load('shell-policy.json');
+
+  // Too many arguments is argument_rejected, because a rule DID apply.
+  const tooMany = file.cases.find((c) => c.id === 'shell.deny.too-many-arguments');
+
+  expect(!!tooMany, 'the too-many-arguments case exists');
+
+  const verdict = shellEvaluate(file.policy_contexts.default, file.rules, tooMany.exe, tooMany.args);
+
+  expect(!verdict.allowed, 'too many arguments is refused');
+  expect(verdict.reason === 'argument_rejected', 'and the reason is argument_rejected, because a rule applied');
+
+  // The rule's own max_args is what rejects it.
+  const rule = file.rules.find((r) => r.id === 'sys.getprop');
+
+  expect(tooMany.args.length > rule.max_args, 'the vector really exceeds the rule maximum (' + tooMany.args.length + ' > ' + rule.max_args + ')');
+
+  // A rule with no pattern for an argument it permits accepts nothing, so the two can never
+  // disagree in the permissive direction.
+  for (const candidate of file.rules) {
+    const hasPatterns = candidate.arg_patterns.length > 0;
+
+    if (candidate.max_args > 0) {
+      expect(hasPatterns, 'the rule "' + candidate.id + '" permits arguments and declares patterns for them');
+    }
+
+    if (hasPatterns) {
+      expect(candidate.max_args > 0, 'the rule "' + candidate.id + '" declares patterns and permits arguments');
+    }
+  }
+
+  // The argv prefix must match EXACTLY, so a subtly different subcommand does not qualify.
+  const mismatch = file.cases.find((c) => c.id === 'shell.deny.argv-prefix-mismatch');
+
+  expect(!!mismatch, 'the argv-prefix-mismatch case exists');
+  expect(mismatch.args[0] === 'window2', 'the vector passes window2 against a window rule');
+  expect(!ruleMatches(file.rules.find((r) => r.id === 'sys.dumpsys.window'), mismatch.exe, mismatch.args), 'window2 does not match the window rule');
+  expect(ruleMatches(file.rules.find((r) => r.id === 'sys.dumpsys.window'), mismatch.exe, ['window']), 'but window does');
+}
+
+
+// ---- ShellPolicyTest: the other two guards a first pass missed --------------------------
+//
+// Five shell mutations survived the first run, and each survivor names a rule the gate did not
+// actually exercise. They are closed here rather than by loosening the mutations.
+{
+  const file = load('shell-policy.json');
+
+  // 1. A RELATIVE path is refused. The vector's own case does cover it, but every check above
+  //    looked at the verdict and not at the guard, and a version of isVettedPath that skipped the
+  //    absolute-path test still reached not_in_allow_list by a different route -- the
+  //    `VETTED_DIRECTORIES.some(...)` failing for a bare `getprop`. So the guard itself is driven
+  //    directly: a name that WOULD start with a vetted directory if it were absolute.
+  expect(!isVettedPath('getprop'), 'a bare name is not a vetted path');
+
+  // Each guard inside isVettedPath has to be reachable by an input that only THAT guard refuses.
+  // A guard no input can distinguish from its absence is not a guard, and a mutation test rightly
+  // reports it as one that survives.
+  //
+  // The rule is two tests: the basename must name a program, and the directory must equal a
+  // vetted directory. Everything else this function once checked turned out to be unreachable --
+  // driven exhaustively, three of the four guards changed no answer for any input, because the
+  // directory comparison already refuses a relative path, a traversal path and a doubled slash.
+  // They were removed rather than kept, and these checks now pin the two that remain.
+  const vettedAbsolute = '/system/bin/getprop';
+
+  expect(isVettedPath(vettedAbsolute), 'an absolute vetted path is accepted');
+  expect(isVettedPath('/system/xbin/su'), 'and so is one from the other vetted directory');
+  expect(
+    SHELL_VETTED_DIRECTORIES.includes(vettedAbsolute.slice(0, vettedAbsolute.lastIndexOf('/') + 1)),
+    'and the directory it names is one of the vetted ones',
+  );
+
+  // Guard 1: the DIRECTORY is compared for EQUALITY.
+  //
+  //   The distinguishing input is a path whose leading characters spell a vetted directory but
+  //   whose directory is not one -- `startsWith` accepts it and equality refuses it. Without this
+  //   guard the check would be a prefix test, which is the bug the shape exists to prevent.
+  for (const prefixOnly of ['/system/bin/getprop/x', '/system/bin/./getprop', '/system/bin/x/y/getprop']) {
+    expect(
+      SHELL_VETTED_DIRECTORIES.some((directory) => prefixOnly.startsWith(directory)),
+      'the probe "' + prefixOnly + '" passes a prefix test',
+    );
+    expect(!isVettedPath(prefixOnly), 'and is refused, because the directory is not equal to a vetted one');
+  }
+
+  // The equality comparison is also what refuses a RELATIVE path and a path that leaves a vetted
+  // directory, with no separate absolute-path or traversal guard needed.
+  for (const relative of ['bin/getprop', 'system/bin/getprop', './system/bin/getprop', vettedAbsolute.slice(1)]) {
+    expect(!relative.startsWith('/'), 'the probe "' + relative + '" is relative');
+    expect(!isVettedPath(relative), 'and is refused, because its directory is not a vetted one');
+  }
+
+  for (const leavesVetted of ['/system/bin/../data/local/tmp/payload', '/system/bin/getprop/../rm']) {
+    expect(!isVettedPath(leavesVetted), 'a path leaving a vetted directory is refused (' + leavesVetted + ')');
+  }
+
+  // A doubled slash is refused for the same reason: `/system/bin//` is not the string
+  // `/system/bin/`. Asserted as a consequence of the comparison rather than as a guard of its
+  // own, so the check says what is actually true.
+  expect(!isVettedPath('/system/bin//getprop'), 'a doubled slash is refused');
+  expect(
+    !SHELL_VETTED_DIRECTORIES.includes('/system/bin//'),
+    'because the doubled directory is not equal to the vetted one',
+  );
+
+  // Guard 2: the BASENAME must name a program.
+  //
+  //   This is the only other test that changes an answer, and it changes it for exactly one shape:
+  //   a path whose DIRECTORY is vetted but whose basename is empty or a directory name. Removing
+  //   it accepts `/system/bin/`, which is a directory and not an executable.
+  for (const directoryItself of ['/system/bin/', '/system/xbin/', '/system/bin/.', '/system/bin/..']) {
+    expect(
+      SHELL_VETTED_DIRECTORIES.includes(directoryItself.slice(0, directoryItself.lastIndexOf('/') + 1)),
+      'the probe "' + directoryItself + '" names a vetted DIRECTORY',
+    );
+    expect(!isVettedPath(directoryItself), 'and is refused, because its basename names no program');
+  }
+
+  // The vetted directories themselves, without a trailing slash, are refused by the equality test.
+  for (const bareDirectory of ['/system/bin', '/system/xbin']) {
+    expect(!isVettedPath(bareDirectory), 'the bare directory "' + bareDirectory + '" is not an executable');
+  }
+
+  // And a path with no directory at all has nothing to compare.
+  for (const noDirectory of ['getprop', '', '/getprop']) {
+    expect(!isVettedPath(noDirectory), 'the probe "' + noDirectory + '" names no directory');
+  }
+
+  expect(!isVettedPath('/data/local/tmp/payload'), 'an unvetted directory is refused');
+  expect(!isVettedPath('/system/bogus/getprop'), 'a neighbouring directory is refused');
+
+  // The relative-path case from the file is rejected, and by the path guard.
+  const relative = file.cases.find((c) => c.id === 'shell.deny.relative-path');
+  expect(!!relative, 'the relative-path case exists');
+  expect(!relative.exe.startsWith('/'), 'the vector names a bare name (' + relative.exe + ')');
+  expect(!isVettedPath(relative.exe), 'and the path guard refuses it');
+  expect(
+    shellEvaluate(file.policy_contexts.default, file.rules, relative.exe, relative.args).reason === 'not_in_allow_list',
+    'and the verdict is not_in_allow_list',
+  );
+
+  // 2. The argument COUNT is capped. No vector exceeds a rule's max_args in a way that a missing
+  //    count check would let through -- the surplus argument is also rejected by the pattern for
+  //    its position, which is why the mutation survived. The cap is therefore driven on its own,
+  //    with arguments that all match a pattern so only the count can refuse them.
+  const counting = {
+    id: 'test.count',
+    exe: '/system/bin/test',
+    argv_prefix: [],
+    max_args: 2,
+    arg_patterns: ['^[a-z]+$', '^[a-z]+$', '^[a-z]+$'],
+    timeout_ms: 1000,
+  };
+
+  expect(ruleArgumentsMatch(counting, '/system/bin/test', ['ab', 'cd']), 'two matching arguments are accepted');
+  expect(ruleArgumentsMatch(counting, '/system/bin/test', ['ab']), 'one matching argument is accepted');
+  // The rule declares a pattern for the third argument as well, so the ONLY guard that can refuse
+  // it is the count. With fewer patterns the refusal would come from the missing pattern at that
+  // position, which is why the count mutation survived a first pass.
+  expect(ruleArgumentsMatch(counting, '/system/bin/test', ['ab', 'cd']), 'two arguments are accepted');
+  expect(
+    !ruleArgumentsMatch(counting, '/system/bin/test', ['ab', 'cd', 'ef']),
+    'a third argument is refused by the COUNT even though a pattern exists for it',
+  );
+
+  // Which is proved by checking the pattern in isolation: the third argument matches it, so the
+  // count is what refuses the vector.
+  expect(
+    new RegExp(counting.arg_patterns[2]).test('ef'),
+    'the third argument matches the pattern at its position',
+  );
+
+  // And the vector's own case really does exceed the rule's maximum.
+  const tooMany = file.cases.find((c) => c.id === 'shell.deny.too-many-arguments');
+  const getpropRule = file.rules.find((r) => r.id === 'sys.getprop');
+
+  expect(!!tooMany, 'the too-many-arguments case exists');
+  expect(tooMany.args.length > getpropRule.max_args, 'the vector exceeds the rule maximum (' + tooMany.args.length + ' > ' + getpropRule.max_args + ')');
+
+  // 3. An argument with NO PATTERN of its own is refused, not accepted. A rule that permits more
+  //    arguments than it has patterns would otherwise accept an unconstrained one -- so the check
+  //    drives exactly that rule, which no vector provides.
+  const underSpecified = {
+    id: 'test.under-specified',
+    exe: '/system/bin/test',
+    argv_prefix: [],
+    max_args: 2,
+    arg_patterns: ['^[a-z]+$'],
+    timeout_ms: 1000,
+  };
+
+  expect(ruleArgumentsMatch(underSpecified, '/system/bin/test', ['ab']), 'the argument that has a pattern is accepted');
+  expect(
+    !ruleArgumentsMatch(underSpecified, '/system/bin/test', ['ab', 'cd']),
+    'the argument with no pattern of its own is refused',
+  );
+
+  // 4. The command-line cap is enforced. Every vector is rejected by a pattern first, so the cap
+  //    has to be driven with a command line that exceeds it and matches every pattern.
+  const cap = SHELL_MAX_COMMAND_LINE_BYTES;
+
+  expect(commandLineLength('/system/bin/getprop', ['a']) < cap, 'an ordinary command line is under the cap');
+  expect(commandLineLength('/system/bin/getprop', ['a'.repeat(cap)]) > cap, 'a huge argument is over the cap');
+  expect(
+    shellEvaluate(file.policy_contexts.default, file.rules, '/system/bin/getprop', ['a'.repeat(cap)]).reason === 'argument_rejected',
+    'and the cap refuses it as argument_rejected',
+  );
+
+  // The cap is per CONTEXT and the context's own value is what is read, so a context with a lower
+  // cap refuses a command line the default context accepts.
+  const smallCap = { ...file.policy_contexts.default, max_command_line_bytes: 20 };
+  const longEnoughToExceedTheSmallCap = 'a'.repeat(20);
+
+  expect(
+    shellEvaluate(file.policy_contexts.default, file.rules, '/system/bin/getprop', [longEnoughToExceedTheSmallCap]).allowed,
+    'the default context accepts it',
+  );
+  expect(
+    !shellEvaluate(smallCap, file.rules, '/system/bin/getprop', [longEnoughToExceedTheSmallCap]).allowed,
+    'a context with a smaller cap refuses the same command line',
+  );
+
+  // 5. The length is counted in BYTES, not characters. Every vector is ASCII, so a
+  //    character-counting implementation gives the same answer for all of them -- the difference
+  //    is only visible on a multi-byte argument, which is driven here.
+  const oneHundredAccents = 'é'.repeat(100);
+
+  expect(oneHundredAccents.length === 100, 'the argument is one hundred characters');
+  expect(Buffer.byteLength(oneHundredAccents, 'utf8') === 200, 'but two hundred bytes in UTF-8');
+  expect(
+    commandLineLength('/x', [oneHundredAccents]) > commandLineLength('/x', ['a'.repeat(100)]),
+    'so a multi-byte argument counts for more than the same number of ASCII characters',
+  );
+  expect(
+    commandLineLength('/x', [oneHundredAccents]) - commandLineLength('/x', ['a'.repeat(100)]) === 100,
+    'by exactly one extra byte per character',
+  );
+
+  // And the byte count is what makes the cap bite earlier for a multi-byte command line: a string
+  // two hundred characters long exceeds a three-hundred-byte cap by its byte length and not by
+  // its character count.
+  const byteCap = 250;
+  const multibyteContext = { ...file.policy_contexts.default, max_command_line_bytes: byteCap };
+  const twoHundredAccents = 'é'.repeat(200);
+
+  expect(twoHundredAccents.length < byteCap, 'the argument is under the cap by character count');
+  expect(Buffer.byteLength(twoHundredAccents, 'utf8') > byteCap, 'but over it by byte count');
+  expect(
+    !shellEvaluate(multibyteContext, file.rules, '/system/bin/getprop', [twoHundredAccents]).allowed,
+    'so the cap refuses it, which a character count would not',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------

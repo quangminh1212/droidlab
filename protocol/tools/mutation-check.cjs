@@ -290,6 +290,86 @@ const MUTATIONS = [
     to: 'const SESSION_UNENCRYPTED = new Set([SESSION_MESSAGES.HELLO, SESSION_MESSAGES.HELLO_ACK, SESSION_MESSAGES.ERROR]);',
   },
   {
+    rule: 'shell: the operator grant is checked first and alone',
+    from: "  if (!context.shell_granted) {\n    return { allowed: false, error: 'ERR_PERMISSION_DENIED', reason: 'denied_by_operator' };\n  }",
+    to: '  ',
+  },
+  {
+    rule: 'shell: the deny list is checked before any rule matching',
+    from: "  if (context.denied_rules.includes(basename)) {\n    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'deny_listed' };\n  }",
+    to: '  ',
+  },
+  {
+    rule: 'shell: the deny list matches by basename, not by path',
+    from: "  const basename = executable.includes('/') ? executable.slice(executable.lastIndexOf('/') + 1) : executable;",
+    to: '  const basename = executable;',
+  },
+  {
+    rule: 'shell: the directory is compared for EQUALITY, not by prefix',
+    from: '  return SHELL_VETTED_DIRECTORIES.includes(directory);',
+    to: '  return SHELL_VETTED_DIRECTORIES.some((candidate) => executable.startsWith(candidate));',
+  },
+  {
+    rule: 'shell: the basename must name a program, so a directory is not executable',
+    from: "  if (basename === '' || basename === '.' || basename === '..') return false;",
+    to: '  ',
+  },
+  {
+    rule: 'shell: the level gate removes a mutating rule from a read_only context',
+    from: "  const permits = (mutating) => !mutating || context.allow_level === 'read_write';",
+    to: '  const permits = (mutating) => true;',
+  },
+  {
+    rule: 'shell: the argv prefix identifies the rule, so a mismatch is not_in_allow_list',
+    from: "      permits(ruleIsMutating(rule)) &&\n      ruleSignatureMatches(rule, executable, args),",
+    to: '      permits(ruleIsMutating(rule)) &&\n      rule.exe === executable,',
+  },
+  {
+    rule: 'shell: a matched rule with a bad argument is argument_rejected',
+    from: "  const matched = applicable.find((rule) => ruleArgumentsMatch(rule, executable, args));\n\n  if (matched === undefined) {\n    return { allowed: false, error: 'ERR_NOT_ALLOWED', reason: 'argument_rejected' };\n  }",
+    to: '  const matched = applicable.find((rule) => ruleArgumentsMatch(rule, executable, args));\n\n  if (matched === undefined) {\n    return { allowed: false, error: \'ERR_NOT_ALLOWED\', reason: \'not_in_allow_list\' };\n  }',
+  },
+  {
+    rule: 'shell: the argument count is capped',
+    from: '  if (rest.length > rule.max_args) return false;',
+    to: '  ',
+  },
+  {
+    rule: 'shell: every permitted argument is matched against its pattern',
+    from: '    if (!new RegExp(pattern).test(rest[index])) return false;',
+    to: '    ',
+  },
+  {
+    rule: 'shell: an argument with no pattern of its own is refused, not accepted',
+    from: '    if (pattern === undefined) return false;',
+    to: '    if (pattern === undefined) continue;',
+  },
+  {
+    rule: 'shell: the argv prefix must match literally at the front',
+    from: '    if (args[index] !== rule.argv_prefix[index]) return false;',
+    to: '    ',
+  },
+  {
+    rule: 'shell: the command-line cap is enforced',
+    from: '  if (commandLineLength(executable, args) > (context.max_command_line_bytes || SHELL_MAX_COMMAND_LINE_BYTES)) {\n    return { allowed: false, error: \'ERR_NOT_ALLOWED\', reason: \'argument_rejected\' };\n  }',
+    to: '  ',
+  },
+  {
+    rule: 'shell: the command-line length is counted in bytes, not characters',
+    from: "    args.reduce((total, argument) => total + Buffer.byteLength(argument, 'utf8'), 0) +",
+    to: '    args.reduce((total, argument) => total + argument.length, 0) +',
+  },
+  {
+    rule: 'shell: the suspension threshold is twenty rejections',
+    from: 'const SHELL_REJECTIONS_BEFORE_SUSPENSION = 20;',
+    to: 'const SHELL_REJECTIONS_BEFORE_SUSPENSION = 21;',
+  },
+  {
+    rule: 'shell: the output cap is a maximum',
+    from: '  return produced > SHELL_OUTPUT_CAP_BYTES;',
+    to: '  return false;',
+  },
+  {
     rule: 'crypto: nothing accepted yet is not the number zero',
     from: '  if (highestAccepted === null || highestAccepted === undefined) {\n    return { accepted: true, replay: false };\n  }',
     to: '  if (highestAccepted === undefined) highestAccepted = 0;',
@@ -346,8 +426,14 @@ function main() {
   const survivors = [];
   const skipped = [];
 
+  // The same normalisation the apply step uses, so the pre-check and the edit cannot disagree
+  // about whether a needle is present. A CRLF gate against a `\n` needle is the mismatch this
+  // avoids: the check would report a skip for a mutation that would in fact have applied.
+  const normaliseForMatch = (text) => text.replace(/\r\n/g, '\n');
+  const matchableOriginal = normaliseForMatch(original);
+
   for (const mutation of MUTATIONS) {
-    if (!original.includes(mutation.from)) {
+    if (!matchableOriginal.includes(normaliseForMatch(mutation.from))) {
       // A mutation whose needle no longer matches is a hole in THIS tool, not a pass. It is
       // reported as a failure so that a refactor of the gate cannot quietly reduce the coverage
       // of the thing that checks the coverage.
@@ -355,7 +441,28 @@ function main() {
       continue;
     }
 
-    fs.writeFileSync(gate, original.replace(mutation.from, mutation.to));
+    // The needle and the gate are compared with line endings NORMALISED. The gate is checked in
+    // with CRLF, and a mutation declared with `\n` in its needle would otherwise match nothing --
+    // which is how sixteen of the shell mutations silently failed to apply. Normalising here
+    // rather than writing `\r\n` in every needle keeps the declarations readable and makes the
+    // match independent of whichever platform last touched either file.
+    const normalise = (text) => text.replace(/\r\n/g, '\n');
+    const normalisedOriginal = normalise(original);
+    const normalisedFrom = normalise(mutation.from);
+
+    // The mutated gate is written back with the ORIGINAL file's line endings, so a mutated run
+    // differs from the clean one only by the mutation itself.
+    const usesCrlf = original.includes('\r\n');
+    const mutated = normalisedOriginal.replace(normalisedFrom, normalise(mutation.to));
+
+    if (mutated === normalisedOriginal) {
+      console.log(`FAIL      ${mutation.rule}`);
+      console.log('          the needle matched nothing, so no mutation was applied');
+      restore();
+      continue;
+    }
+
+    fs.writeFileSync(gate, usesCrlf ? mutated.replace(/\n/g, '\r\n') : mutated);
 
     const result = runGate();
 
