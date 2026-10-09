@@ -73,6 +73,7 @@ pub mod registry;
 pub mod schema;
 pub mod seed;
 pub mod transcript;
+pub mod version;
 pub mod wire;
 
 pub use capability::{
@@ -119,6 +120,10 @@ pub use seed::{
 pub use transcript::{
     Transcript, TranscriptError, FIXED_WIDTH_TOTAL, LABEL_LENGTH, LENGTH_PREFIX_LENGTH,
     SEPARATOR_LENGTH,
+};
+pub use version::{
+    check_header_against_body, classify_change, is_a_valid_answer, negotiate_versions, ChangeKind,
+    HeaderBodyMismatch, Negotiation, Version, VersionError,
 };
 pub use wire::{
     enables_compression, should_compress, wire_size, wire_size_compressed, CompressionDecision,
