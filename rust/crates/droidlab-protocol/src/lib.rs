@@ -73,6 +73,7 @@ pub mod pairing;
 pub mod registry;
 pub mod schema;
 pub mod seed;
+pub mod session;
 pub mod transcript;
 pub mod version;
 pub mod wire;
@@ -124,6 +125,10 @@ pub use schema::{
 pub use seed::{
     from_base64url, from_hex, key_from_hex, key_from_seed, seed_hex, to_base64url, to_hex,
     Base64Error, HexError, SEED_PREFIX,
+};
+pub use session::{
+    end_reason_for, session_survives, ChannelId, FaultResponse, IllegalTransition, SequenceCounter,
+    SequenceTracker, SequenceVerdict, SessionEndReason, SessionState, Side,
 };
 pub use transcript::{
     Transcript, TranscriptError, FIXED_WIDTH_TOTAL, LABEL_LENGTH, LENGTH_PREFIX_LENGTH,
