@@ -505,7 +505,7 @@ the case for the environment this was written in. What that means concretely:
   does, and it should be retired once the Kotlin compiles in CI — not kept because it is
   cheap.
 
-Rust does not have that blind spot, which is the whole reason it is the core. Its 79 tests
+Rust does not have that blind spot, which is the whole reason it is the core. Its 235 tests
 run on every commit and its output is evidence that the code exists, compiles, and behaves.
 
 
@@ -581,7 +581,7 @@ cannot yet assert them it asserts that it cannot.
 | Milestone | Scope | Status |
 | --------- | ----- | ------ |
 | **M0 — Specification** | RFC-0001…0004, ADRs, schemas, registries, conformance vectors, verifiers | ✅ Complete |
-| **M1 — Protocol codecs** | C# codec (583 tests, 84/84 vectors); Rust reference core (79 tests, framing/cbOR/registry/limits wired); Kotlin sibling written and **not yet compiled** | 🟡 C# done, Rust in progress, Kotlin unverified |
+| **M1 — Protocol codecs** | C# codec (583 tests, 84/84 vectors); Rust reference core (235 tests, all ten vector files wired); Kotlin sibling written and **not yet compiled** | 🟡 C# done, Rust in progress, Kotlin unverified |
 | **M2 — Pairing + discovery** | QR pairing, mDNS advertisement and verification, session establishment | ⬜ Planned |
 | **M3 — Mirror + input** | MediaProjection capture, H.264 streaming, hardware decode, touch/key/text | ⬜ Planned |
 | **M4 — Shell + files + logs** | Allow-listed shell, scoped file transfer, clipboard, logcat | ⬜ Planned |
@@ -590,11 +590,13 @@ cannot yet assert them it asserts that it cannot.
 
 M1 is split rather than marked done, because its three implementations are not in the same
 state. The C# codec passes every vector under `dotnet test`. The Rust core compiles, lints
-clean, and passes 79 tests — but its conformance coverage is partial: framing, cbOR, the
-error-code registry and the limits are wired to the real vectors, while the crypto,
-handshake, discovery, session and shell modules are still to port. The Kotlin codec is
+clean under `-D warnings`, and passes 235 tests across fourteen conformance suites — framing,
+malformed framing, cbOR, the error-code registry, the limits, wire efficiency, crypto
+conformance, pairing, frame classification, the message-type registry, capability negotiation,
+version negotiation, discovery advertisement, the session state machine and the shell policy.
+Every one of the ten vector files is now wired to the real vectors on disk. The Kotlin codec is
 written and never compiled, because this project's environment has no Android SDK or Gradle.
-Marking M1 complete would assert something untrue about two of the three, which is the
+Marking M1 complete would assert something untrue about one of the three, which is the
 failure mode that [What is verified, and what is not](#what-is-verified-and-what-is-not)
 exists to avoid.
 

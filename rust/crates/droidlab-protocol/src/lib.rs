@@ -74,6 +74,7 @@ pub mod registry;
 pub mod schema;
 pub mod seed;
 pub mod session;
+pub mod shellpolicy;
 pub mod transcript;
 pub mod version;
 pub mod wire;
@@ -129,6 +130,12 @@ pub use seed::{
 pub use session::{
     end_reason_for, session_survives, ChannelId, FaultResponse, IllegalTransition, SequenceCounter,
     SequenceTracker, SequenceVerdict, SessionEndReason, SessionState, Side,
+};
+pub use shellpolicy::{
+    audit_records_blocked, basename_of, command_line_bytes, evaluate, is_prefix, timeout_exit_code,
+    AllowLevel, BoundedPattern, Decision, OutputBuffer, PatternError, PolicyContext, RateLimit,
+    RejectionLimiter, RejectionReason, Rule, DEFAULT_MAX_COMMAND_LINE_BYTES, MIN_AUDIT_ENTRIES,
+    REQUIRED_AUDIT_FIELDS, SIGKILL, TIMEOUT_EXIT_CODE,
 };
 pub use transcript::{
     Transcript, TranscriptError, FIXED_WIDTH_TOTAL, LABEL_LENGTH, LENGTH_PREFIX_LENGTH,
