@@ -60,6 +60,7 @@
 #![deny(clippy::panic)]
 #![deny(clippy::indexing_slicing)]
 
+pub mod capability;
 pub mod cbor;
 pub mod classify;
 pub mod error;
@@ -74,6 +75,11 @@ pub mod seed;
 pub mod transcript;
 pub mod wire;
 
+pub use capability::{
+    clamp_file_chunk, clamp_shell_timeout, clamp_video, even_floor, fit_inside,
+    is_known_capability, may_reopen, negotiate, ungated_message_types, ChannelAllocator,
+    ClampOutcome, Negotiated, VideoApplied, VideoRequest, CAPABILITIES, COMPRESSION,
+};
 pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
 pub use classify::{
     classify, classify_in_state, classify_with_message_type, is_repeat_of_a_passed_state,
@@ -98,9 +104,9 @@ pub use pairing::{
 };
 pub use registry::Direction as MessageDirection;
 pub use registry::{
-    all_codes, all_names, is_registered_message_type, is_registered_name, may_be_unencrypted,
-    message_type, message_type_by_name, must_be_encrypted, ChannelScope, MessageType,
-    MESSAGE_TYPES,
+    all_codes, all_names, capability_for_message_type, is_registered_message_type,
+    is_registered_name, may_be_unencrypted, message_type, message_type_by_name, must_be_encrypted,
+    ChannelScope, MessageType, MESSAGE_TYPES,
 };
 pub use schema::{
     check_capability, check_channel, check_channel_limit, validate_body, validate_raw_body,

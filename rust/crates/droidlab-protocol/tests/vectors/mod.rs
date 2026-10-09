@@ -218,3 +218,21 @@ pub fn nested<'a>(object: &'a Value, name: &str) -> &'a Value {
         .get(name)
         .unwrap_or_else(|| panic!("object has no field {name:?}"))
 }
+
+/// Loads `protocol/registry/dlwp-1.json`.
+///
+/// The registry is not a vector file, but it is the authority several vector files defer to, so tests
+/// read it directly rather than transcribing it. A transcription checked only against itself drifts.
+pub fn load_registry() -> serde_json::Value {
+    let path = vectors_dir()
+        .parent()
+        .expect("the vectors directory has a parent")
+        .join("registry")
+        .join("dlwp-1.json");
+
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+
+    serde_json::from_str(&text)
+        .unwrap_or_else(|error| panic!("{} is not valid JSON: {error}", path.display()))
+}

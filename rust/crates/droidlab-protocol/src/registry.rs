@@ -444,6 +444,10 @@ pub const HELLO_ACK: u8 = 2;
 pub const AUTH: u8 = 3;
 /// The `AUTH_OK` code.
 pub const AUTH_OK: u8 = 4;
+/// The `GET_CAPABILITIES` code.
+pub const GET_CAPABILITIES_CODE: u8 = 16;
+/// The `CAPABILITIES` code.
+pub const CAPABILITIES_CODE: u8 = 17;
 /// The `ERROR` code.
 pub const ERROR: u8 = 240;
 /// The `SESSION_END` code.
@@ -463,4 +467,53 @@ pub fn must_be_encrypted(code: u8) -> bool {
 #[must_use]
 pub fn may_be_unencrypted(code: u8) -> bool {
     message_type(code).is_some_and(|entry| !entry.encrypted)
+}
+
+/// Whether a message type requires a capability, and the capability's name.
+///
+/// Transcribed from the registry's `message_type_capability`, which is keyed by the message type's
+/// **code** (not by an enumeration index, and not by name). The tests read that file and compare, in
+/// both directions.
+///
+/// That test exists because my first two hand-written versions of this table were both wrong, in three
+/// places, and nothing else in this crate could see it:
+///
+///   * it omitted CHANNEL_OPEN, CHANNEL_OPENED and CHANNEL_CLOSE entirely;
+///   * it omitted SESSION_END;
+///   * it mapped VIDEO_STATS to `screen.mirror` (the registry says `telemetry.stats`);
+///   * it gated 68 (INPUT_GESTURE) on `input.touch` and missed 67 (INPUT_SCROLL), when the registry
+///     does the opposite: `input.gesture` is its own capability and INPUT_SCROLL rides on `input.touch`;
+///   * it mapped 101 (FILE_RESULT) to `file.read` where the registry says `file.write`.
+///
+/// Every one of those was invisible to a test that asked this function what it thought. The lesson is
+/// the one this repository keeps relearning: a transcription must be checked against its source, not
+/// against itself.
+///
+/// Thirteen of the forty-two types carry no capability, for two distinct reasons:
+///
+///   * The handshake types (HELLO, HELLO_ACK, AUTH, AUTH_OK) precede negotiation, so nothing can gate
+///     them -- HELLO is what establishes what could be gated.
+///   * The transport and diagnostics types (PING, PONG, GET_CAPABILITIES, CAPABILITIES, CHANNEL_OPEN,
+///     CHANNEL_OPENED, CHANNEL_CLOSE, ERROR, SESSION_END) are what a session of any capability set
+///     needs in order to exist, to open a channel, and to be diagnosed.
+#[must_use]
+pub const fn capability_for_message_type(message_type: u8) -> Option<&'static str> {
+    match message_type {
+        48..=51 => Some("screen.mirror"),
+        52 => Some("telemetry.stats"),
+        64 | 67 => Some("input.touch"),
+        65 => Some("input.key"),
+        66 => Some("input.text"),
+        68 => Some("input.gesture"),
+        80..=82 => Some("shell.exec"),
+        96..=99 => Some("file.read"),
+        100 | 101 => Some("file.write"),
+        112 | 114 => Some("clipboard.read"),
+        113 => Some("clipboard.write"),
+        128 | 129 => Some("device.info"),
+        130 | 131 => Some("log.stream"),
+        144 => Some("app.install"),
+        145 | 146 => Some("app.launch"),
+        _ => None,
+    }
 }

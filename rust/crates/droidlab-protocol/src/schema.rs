@@ -296,39 +296,13 @@ pub fn validate_raw_body(message_type: u8, body: &[u8]) -> Result<(), Validation
     validate_body(message_type, &map)
 }
 
-/// Whether a message type requires a capability, and the capability's name.
-///
-/// The registry's `message_type_capability` maps message types to capabilities. This is the subset the
-/// vectors exercise, plus the ones a session needs.
-#[must_use]
-pub const fn capability_for_message_type(message_type: u8) -> Option<&'static str> {
-    match message_type {
-        0x30..=0x33 => Some("screen.mirror"),
-        0x34 => Some("telemetry.stats"),
-        0x40 | 0x43 => Some("input.touch"),
-        0x41 => Some("input.key"),
-        0x42 => Some("input.text"),
-        0x44 => Some("input.gesture"),
-        0x50..=0x52 => Some("shell.exec"),
-        0x60..=0x63 => Some("file.read"),
-        0x64 | 0x65 => Some("file.write"),
-        0x70 | 0x72 => Some("clipboard.read"),
-        0x71 => Some("clipboard.write"),
-        0x80 | 0x81 => Some("device.info"),
-        0x82 | 0x83 => Some("log.stream"),
-        0x90 => Some("app.install"),
-        0x91 | 0x92 => Some("app.launch"),
-        _ => None,
-    }
-}
-
 /// Checks whether a message type is allowed by a negotiated capability set.
 ///
 /// A message type with no capability requirement is always allowed, which is what makes the handshake
 /// and the error channel work before any capability is negotiated.
 #[must_use]
 pub fn is_capability_allowed(message_type: u8, negotiated: &[String]) -> bool {
-    match capability_for_message_type(message_type) {
+    match crate::registry::capability_for_message_type(message_type) {
         None => true,
         Some(required) => negotiated.iter().any(|name| name == required),
     }
