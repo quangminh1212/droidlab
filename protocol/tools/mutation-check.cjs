@@ -161,6 +161,56 @@ const MUTATIONS = [
     to: '  return sharedSecret[0] !== 0;',
   },
   {
+    rule: 'discovery: the separator goes between fields, not after each one',
+    from: "    const hasPredecessor = ordered.slice(0, index).some((k) => Object.prototype.hasOwnProperty.call(fields, k) && fields[k] !== undefined);\n    if (hasPredecessor) text += '\\u000A';",
+    to: "    text += '\\u000A';",
+  },
+  {
+    rule: 'discovery: the label is followed by a NUL',
+    from: "  let text = DISCOVERY.TXT_LABEL + '\\u0000';",
+    to: '  let text = DISCOVERY.TXT_LABEL;',
+  },
+  {
+    rule: 'discovery: a missing required key is refused',
+    from: "      if (DISCOVERY.REQUIRED_KEYS.includes(key)) {\n        throw new Error('the required key \"' + key + '\" is missing');\n      }\n      continue;",
+    to: '      continue;',
+  },
+  {
+    rule: 'discovery: a value containing a newline is refused',
+    from: "    if (String(value).includes('\\n')) {\n      throw new Error('the value of \"' + key + '\" contains a newline');\n    }",
+    to: '    ',
+  },
+  {
+    rule: 'discovery: the optional keys are appended after the required ones',
+    from: "  const ordered = [...DISCOVERY.REQUIRED_KEYS, ...DISCOVERY.OPTIONAL_KEYS];",
+    to: '  const ordered = [...DISCOVERY.REQUIRED_KEYS];',
+  },
+  {
+    rule: 'discovery: the beacon is canonicalised in ascending key order',
+    from: '  const ordered = Object.keys(fields).sort();',
+    to: '  const ordered = Object.keys(fields);',
+  },
+  {
+    rule: 'discovery: port zero is not a usable address',
+    from: '  return port >= 1 && port <= 65535;',
+    to: '  return port >= 0 && port <= 65535;',
+  },
+  {
+    rule: 'discovery: the TXT budget is a maximum, not a target',
+    from: '  return byteCount >= 0 && byteCount <= DISCOVERY.MAX_TXT_BYTES;',
+    to: '  return byteCount >= 0;',
+  },
+  {
+    rule: 'discovery: the beacon port is not the service port',
+    from: '  BEACON_PORT: 45918,',
+    to: '  BEACON_PORT: 45917,',
+  },
+  {
+    rule: 'discovery: a beacon is only sent when discovery is enabled',
+    from: '  return discoveryEnabled === true;',
+    to: '  return true;',
+  },
+  {
     rule: 'crypto: nothing accepted yet is not the number zero',
     from: '  if (highestAccepted === null || highestAccepted === undefined) {\n    return { accepted: true, replay: false };\n  }',
     to: '  if (highestAccepted === undefined) highestAccepted = 0;',

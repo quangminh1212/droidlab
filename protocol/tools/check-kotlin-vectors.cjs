@@ -2652,6 +2652,461 @@ function isUsableSharedSecret(sharedSecret) {
   expect(4 + 8 === 12, 'the nonce is twelve bytes');
 }
 
+
+// ---------------------------------------------------------------------------
+// DiscoveryAdvertisement  --  mirror of DiscoveryAdvertisement.kt
+// ---------------------------------------------------------------------------
+
+const DISCOVERY = {
+  SERVICE_TYPE: '_droidlab._tcp',
+  DOMAIN: 'local',
+  TXT_LABEL: 'DLWP/1-txt',
+  FIELD_SEPARATOR: 0x0a,
+  REQUIRED_KEYS: ['v', 'id', 'fp', 'caps', 'port'],
+  OPTIONAL_KEYS: ['model', 'android', 'sdk', 'busy', 'loc', 'tls'],
+  DEFAULT_PORT: 45917,
+  BEACON_PORT: 45918,
+  TTL_SECONDS: 120,
+  MAX_TXT_BYTES: 1300,
+  SIGNATURE_LENGTH_BYTES: 64,
+};
+
+/** Mirror of DiscoveryAdvertisement.canonicalTxt. */
+function canonicalTxt(fields) {
+  const ordered = [...DISCOVERY.REQUIRED_KEYS, ...DISCOVERY.OPTIONAL_KEYS];
+  let text = DISCOVERY.TXT_LABEL + '\u0000';
+
+  for (let index = 0; index < ordered.length; index++) {
+    const key = ordered[index];
+    const value = fields[key];
+
+    if (value === undefined || value === null) {
+      if (DISCOVERY.REQUIRED_KEYS.includes(key)) {
+        throw new Error('the required key "' + key + '" is missing');
+      }
+      continue;
+    }
+
+    if (String(value).includes('\n')) {
+      throw new Error('the value of "' + key + '" contains a newline');
+    }
+
+    // The separator goes BETWEEN fields, never after the last one. Appending it per-field
+    // would leave a trailing newline: one byte longer and a different signature.
+    const hasPredecessor = ordered.slice(0, index).some((k) => Object.prototype.hasOwnProperty.call(fields, k) && fields[k] !== undefined);
+    if (hasPredecessor) text += '\u000A';
+
+    text += key + '=' + value;
+  }
+
+  return Buffer.from(text, 'utf8');
+}
+
+/** Mirror of DiscoveryAdvertisement.canonicalBeacon. */
+function canonicalBeacon(fields) {
+  const ordered = Object.keys(fields).sort();
+
+  return Buffer.from(
+    ordered
+      .map((key) => {
+        const value = fields[key];
+        if (typeof value === 'string' || typeof value === 'number') return key + '=' + value;
+        throw new Error('the field "' + key + '" is neither a string nor a number');
+      })
+      .join('\n'),
+    'utf8',
+  );
+}
+
+/** Mirror of DiscoveryAdvertisement.fitsTxtBudget. */
+function fitsTxtBudget(byteCount) {
+  return byteCount >= 0 && byteCount <= DISCOVERY.MAX_TXT_BYTES;
+}
+
+/** Mirror of DiscoveryAdvertisement.isUsablePort. */
+function isUsablePort(port) {
+  return port >= 1 && port <= 65535;
+}
+
+/** Mirror of DiscoveryAdvertisement.mayBeacon. */
+function mayBeacon(discoveryEnabled) {
+  return discoveryEnabled === true;
+}
+
+/** The plain-string view of a vector's `fields`. */
+function discoveryFields(v) {
+  const out = {};
+  for (const [key, value] of Object.entries(v.fields)) {
+    if (typeof value === 'string' || typeof value === 'number') out[key] = value;
+    else throw new Error('discovery field "' + key + '" is neither a string nor a number');
+  }
+  return out;
+}
+
+/** A discovery vector by id. */
+function discoveryVector(file, key, id) {
+  const found = (file[key] || []).find((v) => v.id === id);
+  if (!found) throw new Error('discovery.json has no ' + key + ' entry "' + id + '"');
+  return found;
+}
+
+// ---- DiscoveryTest.theServiceConstantsAreTheOnesUsed --------------------------
+{
+  const service = load('discovery.json').service;
+
+  expect(service.type === DISCOVERY.SERVICE_TYPE, 'the service type matches (got "' + service.type + '")');
+  expect(service.domain === DISCOVERY.DOMAIN, 'the domain matches (got "' + service.domain + '")');
+  expect(service.default_port === DISCOVERY.DEFAULT_PORT, 'the default port matches (got ' + service.default_port + ')');
+  expect(service.beacon_port === DISCOVERY.BEACON_PORT, 'the beacon port matches (got ' + service.beacon_port + ')');
+  expect(service.ttl_seconds === DISCOVERY.TTL_SECONDS, 'the TTL matches (got ' + service.ttl_seconds + ')');
+  expect(service.max_txt_bytes === DISCOVERY.MAX_TXT_BYTES, 'the size budget matches (got ' + service.max_txt_bytes + ')');
+
+  // The beacon is one above the service port, never the service port itself: a beacon delivered
+  // to the service port would be parsed as a connection attempt.
+  expect(DISCOVERY.BEACON_PORT !== DISCOVERY.DEFAULT_PORT, 'the beacon port is not the service port');
+  expect(DISCOVERY.DEFAULT_PORT + 1 === DISCOVERY.BEACON_PORT, 'the beacon port is the next one up');
+
+  // The budget is the mDNS delivery limit, not a figure chosen for comfort.
+  expect(DISCOVERY.MAX_TXT_BYTES === 1300, 'the budget is the mDNS limit (got ' + DISCOVERY.MAX_TXT_BYTES + ')');
+}
+
+// ---- DiscoveryTest.theCanonicalisationIsFixedOrder ----------------------------
+{
+  const txt = load('discovery.json').txt_canonicalisation;
+  const rule = txt.rule;
+
+  expect(rule.includes('exactly this order'), 'the key order is fixed');
+  expect(rule.includes('separated by 0x0A'), 'the separator is a newline');
+  expect(rule.includes('with the label and a NUL first'), 'the label and a NUL come first');
+  expect(rule.includes('No trailing newline'), 'there is no trailing newline');
+
+  expect(
+    txt.form ===
+      '"DLWP/1-txt" || 0x00 || "v=" || v || 0x0A || "id=" || id || 0x0A || "fp=" || fp || ' +
+        '0x0A || "caps=" || caps || 0x0A || "port=" || port',
+    'the declared form matches (got "' + txt.form + '")',
+  );
+
+  // The order is deliberately not alphabetical, and the file says why.
+  expect(txt.note.includes('fixed rather than alphabetical'), 'the order is fixed, not sorted');
+  expect(
+    DISCOVERY.REQUIRED_KEYS.slice().sort().join(',') !== DISCOVERY.REQUIRED_KEYS.join(','),
+    'the fixed order differs from the sorted order, so the distinction is real',
+  );
+
+  expect(
+    txt.extra_key_order.join(',') === DISCOVERY.OPTIONAL_KEYS.join(','),
+    'the optional key order matches (file ' + txt.extra_key_order.join(',') + ', code ' + DISCOVERY.OPTIONAL_KEYS.join(',') + ')',
+  );
+}
+
+// ---- DiscoveryTest.everyAdvertisementBuildsToItsDeclaredBytes -----------------
+{
+  const file = load('discovery.json');
+  const vectors = file.vectors || [];
+
+  expect(vectors.length >= 4, 'at least 4 advertisement vectors (found ' + vectors.length + ')');
+
+  for (const id of ['discovery.txt.minimal', 'discovery.txt.full']) {
+    const v = discoveryVector(file, 'vectors', id);
+    const built = canonicalTxt(discoveryFields(v)).toString('utf8');
+
+    expect(built === v.canonical_utf8, id + ' produces its declared canonical bytes (got "' + built + '")');
+    expect(
+      Buffer.from(built, 'utf8').length === v.canonical_length_bytes,
+      id + ' declared length matches its bytes (' + Buffer.from(built, 'utf8').length + ' vs ' + v.canonical_length_bytes + ')',
+    );
+  }
+}
+
+// ---- DiscoveryTest.theOptionalKeysAddTheDeclaredBytes ------------------------
+{
+  const file = load('discovery.json');
+  const minimal = canonicalTxt(discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.minimal')));
+  const full = canonicalTxt(discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.full')));
+
+  // The file says 87, measured rather than estimated.
+  expect(full.length - minimal.length === 87, 'the optional keys add 87 bytes (got ' + (full.length - minimal.length) + ')');
+
+  const fullText = full.toString('utf8');
+
+  // NOT asserted as "the full record is the minimal record with fields appended": the two
+  // vectors describe different devices, so their id, fingerprint and capability values differ
+  // too. What holds is only that both carry the same required keys in the same ORDER, which is
+  // what the field-ordering rule is actually about.
+  const keyOrder = (text) => text.split('\n').map((line, i) => (i === 0 ? line.split('\u0000')[1] : line).split('=')[0]);
+
+  expect(
+    keyOrder(fullText).slice(0, 5).join(',') === keyOrder(minimal.toString('utf8')).slice(0, 5).join(','),
+    'both records order their required keys the same way',
+  );
+  expect(
+    keyOrder(fullText).slice(0, 5).join(',') === DISCOVERY.REQUIRED_KEYS.join(','),
+    'the required keys are in the fixed order (got ' + keyOrder(fullText).slice(0, 5).join(',') + ')',
+  );
+
+  const positions = DISCOVERY.OPTIONAL_KEYS.map((k) => fullText.indexOf('\n' + k + '='));
+  expect(positions.every((p) => p > 0), 'every optional key is present');
+
+  const sorted = positions.slice().sort((a, b) => a - b);
+  expect(positions.join(',') === sorted.join(','), 'the optional keys appear in the declared order');
+}
+
+// ---- DiscoveryTest.aRecordHasNoTrailingNewline ------------------------------
+{
+  const file = load('discovery.json');
+  const built = canonicalTxt(discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.minimal')));
+  const text = built.toString('utf8');
+
+  // The mistake this guards: appending the separator after every field rather than between
+  // fields. One byte longer, identical in a terminal, and a different signature.
+  expect(!text.endsWith('\n'), 'the record does not end with a newline');
+  expect(!text.endsWith('\u0000'), 'the record does not end with a NUL');
+
+  expect(
+    (text.match(/\n/g) || []).length === DISCOVERY.REQUIRED_KEYS.length - 1,
+    'one separator between each pair of fields and none after the last (got ' + (text.match(/\n/g) || []).length + ')',
+  );
+
+  expect(text.startsWith(DISCOVERY.TXT_LABEL + '\u0000'), 'the record opens with the label and a NUL');
+
+  // An extra NUL would terminate the string for a C consumer and truncate the record silently.
+  expect((text.match(/\u0000/g) || []).length === 1, 'there is exactly one NUL, after the label');
+}
+
+// ---- DiscoveryTest.anUnknownKeyIsNotSigned ---------------------------------
+{
+  const file = load('discovery.json');
+  const base = discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.minimal'));
+
+  const withExtra = canonicalTxt({ ...base, surprise: 'payload' });
+
+  expect(
+    canonicalTxt(base).equals(withExtra),
+    'an undefined key does not change the signed bytes',
+  );
+
+  expect(!withExtra.toString('utf8').includes('surprise'), 'the undefined key does not appear');
+}
+
+// ---- DiscoveryTest.aMissingRequiredKeyIsRefused ----------------------------
+{
+  const file = load('discovery.json');
+  const base = discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.minimal'));
+
+  for (const key of DISCOVERY.REQUIRED_KEYS) {
+    const incomplete = { ...base };
+    delete incomplete[key];
+
+    let refused = null;
+    try {
+      canonicalTxt(incomplete);
+    } catch (error) {
+      refused = error.message;
+    }
+
+    expect(refused !== null, 'omitting the required key "' + key + '" is refused');
+    expect(
+      refused !== null && refused.includes(key),
+      'the refusal names the missing key "' + key + '" (got "' + refused + '")',
+    );
+  }
+
+  // A missing OPTIONAL key is not refused: its absence is the normal case.
+  const withoutOptional = canonicalTxt({ ...discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.full')), model: undefined });
+  expect(!withoutOptional.toString('utf8').includes('model='), 'a missing optional key is simply absent');
+}
+
+// ---- DiscoveryTest.aNewlineInAValueIsRefused -------------------------------
+{
+  const file = load('discovery.json');
+  const base = discoveryFields(discoveryVector(file, 'vectors', 'discovery.txt.minimal'));
+
+  // A value with a newline would let one field forge the appearance of another, and the record
+  // is signed, so the injected key would be signed too.
+  let refused = null;
+  try {
+    canonicalTxt({ ...base, model: 'Pixel\nid=evil' });
+  } catch (error) {
+    refused = error.message;
+  }
+
+  expect(refused !== null, 'a newline inside a value is refused');
+  expect(refused !== null && refused.includes('model'), 'the refusal names the offending key (got "' + refused + '")');
+}
+
+// ---- DiscoveryTest.theBeaconIsCanonicalisedInAscendingOrder ----------------
+{
+  const file = load('discovery.json');
+  const v = discoveryVector(file, 'vectors', 'discovery.beacon.canonical');
+
+  const built = canonicalBeacon(v.fields);
+  const declared = v.canonical_utf8;
+
+  expect(built.toString('utf8') === declared, 'the beacon builds to its declared bytes (got "' + built.toString('utf8') + '")');
+  expect(built.length === v.canonical_length_bytes, 'the beacon declared length matches its bytes');
+
+  expect(
+    declared ===
+      'busy=0\nfp=9F3C-1A08-B7E2-44D1\nid=11111111-2222-4333-8444-555555555555\n' +
+        'name=Pixel 7 - bench 3\nport=45917\nv=1.0',
+    "the beacon's fields are in ascending key order",
+  );
+
+  const keys = declared.split('\n').map((line) => line.split('=')[0]);
+  expect(keys.join(',') === keys.slice().sort().join(','), 'the beacon keys are ascending');
+
+  // The vector's own field object happens to already be in ascending order, so building it
+  // proves nothing about the sort: removing the sort survived this check. A map whose insertion
+  // order differs from its sorted order is what makes the rule testable.
+  const shuffled = { v: '1.0', port: 45917, name: 'Pixel 7 - bench 3', id: 'i', fp: 'f', busy: 0 };
+  const shuffledBuilt = canonicalBeacon(shuffled).toString('utf8');
+
+  expect(
+    shuffledBuilt === 'busy=0\nfp=f\nid=i\nname=Pixel 7 - bench 3\nport=45917\nv=1.0',
+    'a beacon whose fields were inserted out of order is still built in ascending order (got "' + shuffledBuilt.replace(/\n/g, '\\n') + '")',
+  );
+
+  // A number field is written without a decimal point or quotes: `busy=0`, not `busy=0.0`,
+  // and not `busy="0"`.
+  expect(declared.startsWith('busy=0\n'), 'an integer field is bare');
+  expect(declared.includes('port=45917'), 'a port is written as an integer');
+  expect(!declared.includes('"'), 'the beacon carries no quoting');
+}
+
+// ---- DiscoveryTest.aBadSignatureIsIgnoredNotConnected ----------------------
+{
+  const file = load('discovery.json');
+  const v = discoveryVector(file, 'rejection_vectors', 'discovery.reject.signature-mismatch-paired-device');
+
+  expect(v.signature_valid === false, "the vector's signature is invalid");
+  expect(v.expected === 'ignore_advertisement', 'the advertisement is ignored');
+  expect(v.expected_ui_state === 'Unverified', 'the device is shown as unverified');
+
+  // The device is NOT removed from the list: an attacker jamming the real agent and advertising
+  // in its place could otherwise clear the device, which is a denial of service dressed up as a
+  // safety measure.
+  expect(v.controller_has_pairing_for_id === '11111111-2222-4333-8444-555555555555', 'the controller holds a pairing record');
+  expect(v.note_on_action.includes('must not connect'), 'the controller must not connect');
+  expect(v.note_on_action.includes('must also not quietly remove the device'), 'the device is not removed');
+}
+
+// ---- DiscoveryTest.aChangedFingerprintIsRefused ---------------------------
+{
+  const file = load('discovery.json');
+  const v = discoveryVector(file, 'rejection_vectors', 'discovery.reject.fingerprint-changed-for-known-id');
+
+  expect(v.known_id === '11111111-2222-4333-8444-555555555555', 'the id matches a record');
+
+  // The id is the same and the fingerprint is not. Asserted, because the whole vector is inert
+  // if the two fingerprints happen to be equal.
+  expect(v.known_fingerprint !== v.advertised_fingerprint, 'the fingerprint really did change');
+
+  expect(v.expected === 'refuse_automatic_connect', 'an automatic connect is refused');
+  expect(v.expected_warning.includes('possible impersonation'), 'the warning names impersonation as the possibility');
+
+  // "possible", not "certain": a reinstalled agent with a new identity key gives the same
+  // signal, and the operator decides.
+  expect(!v.expected_warning.includes('confirmed'), 'the warning does not claim certainty');
+}
+
+// ---- DiscoveryTest.theOtherRejectionsAreAsDeclared --------------------------
+{
+  const file = load('discovery.json');
+
+  const port = discoveryVector(file, 'rejection_vectors', 'discovery.reject.port-out-of-range');
+  expect(port.advertised_port === 0, "the vector's port is zero");
+  expect(!isUsablePort(0), 'port zero is not usable');
+  expect(isUsablePort(1), 'port one is usable');
+  expect(isUsablePort(65535), 'port 65535 is usable');
+  expect(!isUsablePort(65536), 'port 65536 is not usable');
+  expect(!isUsablePort(-1), 'a negative port is not usable');
+
+  const version = discoveryVector(file, 'rejection_vectors', 'discovery.reject.unsupported-version');
+  expect(version.advertised_version === '9.0', 'the advertised version is 9.0');
+  expect(version.controller_supported_versions.join(',') === '1.0', 'the controller supports 1.0 only');
+  expect(!version.controller_supported_versions.includes('9.0'), 'the advertised major is not supported');
+  expect(version.expected === 'list_as_incompatible', 'it is listed as incompatible');
+  expect(version.expected_error === 'ERR_VERSION_MISMATCH', 'the fault is a version mismatch');
+
+  // A record over the budget must be regenerated, not truncated.
+  const large = discoveryVector(file, 'rejection_vectors', 'discovery.reject.txt-too-large');
+  expect(large.max_txt_bytes === DISCOVERY.MAX_TXT_BYTES, "the vector's budget is the implementation's");
+  expect(!fitsTxtBudget(large.txt_bytes), large.txt_bytes + ' bytes does not fit a ' + large.max_txt_bytes + ' budget');
+  expect(fitsTxtBudget(large.max_txt_bytes), 'exactly the budget fits');
+  expect(large.expected === 'regenerate_record', 'the record is regenerated');
+
+  const beacon = discoveryVector(file, 'rejection_vectors', 'discovery.reject.beacon-on-public-network');
+  expect(beacon.discovery_enabled === false, 'discovery is disabled');
+  expect(!mayBeacon(false), 'no beacon when discovery is off');
+  expect(mayBeacon(true), 'a beacon when discovery is on');
+  expect(
+    beacon.note.includes('must not unicast it to an address it has not itself been contacted from'),
+    'there is no unicast fallback',
+  );
+}
+
+// ---- DiscoveryTest.aTruncatedCapabilityListIsAdvisory ----------------------
+{
+  const file = load('discovery.json');
+  const v = discoveryVector(file, 'vectors', 'discovery.txt.caps-truncated');
+
+  const advertised = discoveryFields(v).caps.split(',');
+  const available = v.caps_actually_available;
+
+  expect(advertised.length < available.length, 'the advertised list is shorter than the available set');
+
+  for (const capability of advertised) {
+    expect(available.includes(capability), 'the advertised "' + capability + '" really is available');
+  }
+
+  // Capabilities are available that were not advertised, which is the whole point: a controller
+  // that trusted the record would refuse features the agent has.
+  const missing = available.filter((c) => !advertised.includes(c));
+  expect(missing.length > 0, 'some available capabilities were not advertised');
+  expect(missing.includes('screen.record'), 'screen.record is available but not advertised');
+
+  expect(!discoveryFields(v).caps.endsWith(','), 'the capability list has no trailing comma');
+  expect(!discoveryFields(v).caps.includes(',,'), 'the capability list has no empty element');
+
+  expect(
+    v.note_on_trust.includes('Only the CAPABILITIES frame after authentication is authoritative'),
+    'only the post-authentication frame is authoritative',
+  );
+}
+
+// ---- DiscoveryTest.theLifecycleRulesAreAsDeclared -------------------------
+{
+  const file = load('discovery.json');
+
+  const goodbye = discoveryVector(file, 'lifecycle_vectors', 'discovery.goodbye-on-disable');
+  // The goodbye's TTL is ZERO, not the normal TTL. A goodbye is a withdrawal, and the reason it
+  // carries its own TTL is that the alternative -- waiting for the record to expire -- leaves a
+  // disabled agent listed for two minutes with no way for a controller to tell it apart from a
+  // sleeping one.
+  expect(goodbye.goodbye_ttl === 0, 'the goodbye has a TTL of zero (got ' + goodbye.goodbye_ttl + ')');
+  expect(goodbye.goodbye_ttl !== DISCOVERY.TTL_SECONDS, 'the goodbye does not use the normal TTL');
+  expect(goodbye.expected === 'send_goodbye', 'a goodbye is sent');
+
+  // An expired advertisement keeps the device in the list. Removing it on expiry would make a
+  // sleeping phone look like an uninstalled one.
+  const expiry = discoveryVector(file, 'lifecycle_vectors', 'discovery.ttl-expiry-keeps-saved-device');
+  expect(expiry.elapsed_s > expiry.ttl_s, "the vector's elapsed time is past the TTL");
+  expect(expiry.expected_still_listed === true, 'an expired device stays listed');
+  expect(expiry.expected_ui_state.length > 0, 'the expiry has a UI state');
+  expect(!expiry.expected_ui_state.includes('removed'), 'the expired device is not removed from the list');
+
+  // A busy agent still advertises with the flag set, rather than withdrawing: a controller that
+  // cannot see the device at all also cannot see that it is busy.
+  const busy = discoveryVector(file, 'lifecycle_vectors', 'discovery.busy-agent-still-advertises');
+  expect(busy.active_sessions >= busy.max_sessions, "the vector's agent really is at its session limit");
+  expect(busy.expected.includes('advertis'), 'a busy agent still advertises');
+  expect(busy.expected_busy_value === 1, 'the busy flag is set (got ' + JSON.stringify(busy.expected_busy_value) + ')');
+
+  const moved = discoveryVector(file, 'lifecycle_vectors', 'discovery.reannounce-after-address-change');
+  expect(moved.expected === 're_register_service', 'an address change re-registers the service (got ' + moved.expected + ')');
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
