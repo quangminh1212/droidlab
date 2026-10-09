@@ -17,6 +17,7 @@ before any third-party dependency is added to protocol or session layers.
 | [0005](ADR-0005-scrcpy-compatible-video-path.md) | Reuse the scrcpy-compatible H.264 path for video | Accepted |
 | [0006](ADR-0006-adb-over-wifi-instead-of-adbd-bridge.md) | Drive wireless debugging through the platform ADB server | Accepted |
 | [0007](ADR-0007-conformance-vectors-as-the-interop-contract.md) | Conformance vectors are the interoperability contract | Accepted |
+| [0008](ADR-0008-rust-as-the-reference-core.md) | Rust is the reference core, and C# and Kotlin are siblings | Accepted |
 
 ## Template
 

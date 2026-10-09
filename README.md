@@ -30,14 +30,16 @@ Once paired, the phone behaves like a **local test device** attached to the
 workstation: you can see it, tap it, script it, and point existing `adb`-aware
 tooling at it.
 
-> **Status: specification complete; the protocol codecs are implemented in C# and
-> written in Kotlin.** The wire protocol, the security model, the shell safety policy
-> and the 84-check conformance vector set are finished and machine-verified. The C#
-> implementation of M1 is complete (`dotnet test` → 583 passing, 0 warnings), and the
-> Kotlin sibling exists with its first conformance test wired to the same vectors —
-> **but it has never been compiled**, because this project has no Android SDK or Gradle
-> available to it. That distinction is stated wherever it applies and is not glossed
-> over. See [Roadmap](#roadmap) for what is done and what is not, and
+> **Status: specification complete; the protocol codecs are implemented in C#, Rust and
+> Kotlin.** The wire protocol, the security model, the shell safety policy and the
+> 84-check conformance vector set are finished. The C# implementation is complete
+> (`dotnet test` → 583 passing, 0 warnings), and the **Rust reference core** compiles and
+> passes its own suite (`cargo test` → 78 passing, `cargo clippy -D warnings` clean) — see
+> [ADR-0008](docs/adr/ADR-0008-rust-as-the-reference-core.md) for why Rust is the core and
+> the other two are siblings. The Kotlin sibling exists with conformance tests wired to the
+> same vectors — **but it has never been compiled**, because this project has no Android SDK
+> or Gradle available to it. That distinction is stated wherever it applies and is not
+> glossed over. See [Roadmap](#roadmap) for what is done and what is not, and
 > [Verifying the protocol](#verifying-the-protocol) for exactly what is proven.
 
 ### What you get
@@ -412,6 +414,35 @@ ok    all 63 mutations caught
 ok    the gate passes again after restoring
 ```
 
+**6. Rust reference core** — the whole protocol, compiled and tested on every commit. This
+is the only step whose result is evidence that an implementation **compiles and runs** as
+well as that its logic is right:
+
+```text
+cargo fmt --all --check                         -> clean
+cargo clippy --all-targets --all-features -D warnings -> clean
+cargo test --all-features                       -> 79 passed, 0 failed
+```
+
+The suite is 78 integration tests plus the crate's own doctest, and it reads the same
+`protocol/vectors/` files the other two do. Four claims it makes that nothing else did:
+
+* **The framing vectors' bodies are not valid cbOR.** Four of the six carry a truncated
+  tail of the body their own `decoded.body` describes, with one length prefix off by one.
+  Neither the C# suite nor the Kotlin mirror had ever parsed a `body_hex` as cbOR, so two
+  implementations passed over it. See
+  [docs/findings/framing-body-not-cbor.md](docs/findings/framing-body-not-cbor.md).
+* **`RegistryConformanceTests` does not exist.** `ErrorCode.cs` documents a test that
+  asserts its table agrees with `protocol/registry/dlwp-1.json`; nothing in the repository
+  does. The severity table is correct today, but by hand. See
+  [docs/findings/no-registry-severity-check.md](docs/findings/no-registry-severity-check.md).
+* **The registry assigns no numbers to error codes.** Unlike `message_types`, whose entries
+  carry `"code": 1`, error-code entries have only `code` and `severity` — so an error code
+  is identified on the wire only by its name.
+* **The transport's savings are measured, not claimed.** 720 bytes of header recomputation
+  saved over a one-second 60 fps stream, zero allocations per borrowed frame, and a
+  compression threshold calibrated against the 81-byte hot-path body the vectors name.
+
 This step exists because it has already found real holes. A video-clamp guard was inert
 for every vector input; three crypto checks could not fail — the pairing code's byte
 order, its zero padding, and the replay window's null high-water mark; and the beacon's
@@ -442,15 +473,19 @@ All 43 README checks passed.
 
 ### What is verified, and what is not
 
-The two implementations are siblings under ADR-0007: the vectors are the only interop
-contract between them, and neither language is the reference for the other. They are
-*not* verified to the same degree, and the difference matters.
+The three implementations are siblings under ADR-0007: the vectors are the only interop
+contract between them, and no language is the reference for another *by construction*. Rust
+is the **reference core** in a narrower, practical sense that ADR-0008 defines: it is the one
+that compiles and runs here, so a disagreement starts its investigation there. They are *not*
+verified to the same degree, and the difference matters.
 
-| | C# (`windows/DroidLab.Protocol`) | Kotlin (`android/core-protocol`) |
-| --- | --- | --- |
-| Conformance vectors | ✅ 84/84 via `dotnet test` | ⚠️ wired to the same files; **never run** |
-| Unit tests | ✅ 583 passing, 0 warnings | ⚠️ written; **never compiled** |
-| Warnings as errors | ✅ `TreatWarningsAsErrors=true` | ✅ configured, unenforced here |
+| | Rust (`rust/crates/droidlab-protocol`) | C# (`windows/DroidLab.Protocol`) | Kotlin (`android/core-protocol`) |
+| --- | --- | --- | --- |
+| Builds here | ✅ `cargo test`, `cargo clippy -D warnings` | ✅ `dotnet test` | ❌ no Android SDK, no Gradle |
+| Conformance vectors | 🟡 framing + cbOR + registry + limits; crypto and session pending | ✅ 84/84 | ⚠️ wired to the same files; **never run** |
+| Unit tests | ✅ 79 passing, 0 warnings | ✅ 583 passing, 0 warnings | ⚠️ written; **never compiled** |
+| Panics in the codec | 🚫 denied by lint (`unwrap`, `expect`, `panic`, indexing) | ⚠️ no exceptions in the codec by convention | ⚠️ no exceptions in the codec by convention |
+| Warnings as errors | ✅ `-D warnings`, `RUSTFLAGS=-D warnings` in CI | ✅ `TreatWarningsAsErrors=true` | ✅ configured, unenforced here |
 
 The Kotlin side cannot be built on a machine without an Android SDK and Gradle, which is
 the case for the environment this was written in. What that means concretely:
@@ -465,6 +500,13 @@ the case for the environment this was written in. What that means concretely:
 - None of that is evidence that the Kotlin **compiles**. A file that has never been
   through a compiler is unverified, and calling it verified because a port of its logic
   passes would be exactly the kind of claim the rest of this repository refuses to make.
+- The Kotlin mirror is a workaround with a known blind spot: it cannot see a type error, a
+  missing symbol, or a wrong import. It stays because it checks arithmetic nothing else
+  does, and it should be retired once the Kotlin compiles in CI — not kept because it is
+  cheap.
+
+Rust does not have that blind spot, which is the whole reason it is the core. Its 79 tests
+run on every commit and its output is evidence that the code exists, compiles, and behaves.
 
 
 The vectors are the interoperability contract. Two independent implementations —
@@ -501,11 +543,15 @@ droidlab/
 │   ├── schema/              JSON Schema for every DLWP/1 frame
 │   ├── vectors/             Conformance vectors (the interop contract)
 │   └── tools/               Registry drift checker, vector verifier
+├── rust/                    Rust reference core (ADR-0008)
+│   └── crates/
+│       └── droidlab-protocol/  DLWP/1 codec, cbOR, limits, wire efficiency  ← builds & tests
 ├── android/                 Android agent — the APK
-│   └── core-protocol/       DLWP/1 codec (mirrors DroidLab.Protocol)  ← exists
+│   └── core-protocol/       DLWP/1 codec (mirrors DroidLab.Protocol)        ← exists, uncompiled
 ├── windows/                 Windows controller — the EXE
-│   ├── DroidLab.Protocol/   DLWP/1 codec, crypto, session state       ← exists
-│   └── DroidLab.Tests/      xUnit suite (583 tests)                   ← exists
+│   ├── DroidLab.Protocol/   DLWP/1 codec, crypto, session state             ← exists
+│   └── DroidLab.Tests/      xUnit suite (583 tests)                         ← exists
+├── docs/findings/           Defects found in the fixtures and the specs
 ├── scripts/                 Build and release automation
 └── .github/                 CI workflows and templates
 ```
@@ -514,10 +560,19 @@ Modules marked `← exists` are the ones implemented today; the rest of the tree
 planned and is listed here so its boundaries are fixed before the code that has to
 respect them is written. Nothing is claimed to exist that does not.
 
-The `android/core-protocol` and `windows/DroidLab.Protocol` codecs are **siblings, not
-shared libraries**. They must not reference each other; the vectors are what keeps them
-honest. Dependency rules R1–R7 are specified in
+The `rust/crates/droidlab-protocol`, `android/core-protocol` and `windows/DroidLab.Protocol`
+codecs are **siblings, not shared libraries**. They must not reference each other; the
+vectors are what keeps them honest. Dependency rules R1–R7 are specified in
 [docs/architecture/REPOSITORY.md](docs/architecture/REPOSITORY.md) and enforced in review.
+Rust is the **reference core** in the sense ADR-0008 defines — the one that compiles and runs
+here, so a disagreement starts its investigation there — which is not the same as being
+authoritative over the other two.
+
+After a lesson learned the hard way, the vectors are also treated as **code under review**.
+Finding that four of six `framing-basic.json` bodies are not valid cbOR, after two
+implementations had passed over them, is what established that a fixture can be wrong and
+that nothing was checking the fixtures themselves. The Rust suite reads them, and where it
+cannot yet assert them it asserts that it cannot.
 
 ---
 
@@ -526,19 +581,22 @@ honest. Dependency rules R1–R7 are specified in
 | Milestone | Scope | Status |
 | --------- | ----- | ------ |
 | **M0 — Specification** | RFC-0001…0004, ADRs, schemas, registries, conformance vectors, verifiers | ✅ Complete |
-| **M1 — Protocol codecs** | C# DLWP/1 codec, 583 tests, 84/84 vector checks; Kotlin sibling written and **not yet compiled** | 🟡 C# done, Kotlin unverified |
+| **M1 — Protocol codecs** | C# codec (583 tests, 84/84 vectors); Rust reference core (79 tests, framing/cbOR/registry/limits wired); Kotlin sibling written and **not yet compiled** | 🟡 C# done, Rust in progress, Kotlin unverified |
 | **M2 — Pairing + discovery** | QR pairing, mDNS advertisement and verification, session establishment | ⬜ Planned |
 | **M3 — Mirror + input** | MediaProjection capture, H.264 streaming, hardware decode, touch/key/text | ⬜ Planned |
 | **M4 — Shell + files + logs** | Allow-listed shell, scoped file transfer, clipboard, logcat | ⬜ Planned |
 | **M5 — ADB integration** | `adb pair`/`connect` flow, endpoint re-resolution, serial surfacing | ⬜ Planned |
 | **M6 — Release engineering** | Signed APK/EXE, CI matrix, reproducible builds, release notes | ⬜ Planned |
 
-M1 is split rather than marked done, because the two halves are not in the same state.
-The C# codec passes every vector under `dotnet test`. The Kotlin codec is written,
-structured against the same vectors and wired to a conformance test — and has never been
-compiled, because this project's environment has no Android SDK or Gradle. Marking M1
-complete would assert something untrue about half of it, which is the failure mode that
-[What is verified, and what is not](#what-is-verified-and-what-is-not) exists to avoid.
+M1 is split rather than marked done, because its three implementations are not in the same
+state. The C# codec passes every vector under `dotnet test`. The Rust core compiles, lints
+clean, and passes 79 tests — but its conformance coverage is partial: framing, cbOR, the
+error-code registry and the limits are wired to the real vectors, while the crypto,
+handshake, discovery, session and shell modules are still to port. The Kotlin codec is
+written and never compiled, because this project's environment has no Android SDK or Gradle.
+Marking M1 complete would assert something untrue about two of the three, which is the
+failure mode that [What is verified, and what is not](#what-is-verified-and-what-is-not)
+exists to avoid.
 
 ---
 
