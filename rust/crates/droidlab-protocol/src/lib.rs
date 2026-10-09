@@ -64,6 +64,7 @@ pub mod cbor;
 pub mod error;
 pub mod frame_header;
 pub mod limits;
+pub mod wire;
 
 pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
 pub use error::{ErrorCode, FrameError, Severity};
@@ -71,3 +72,8 @@ pub use frame_header::{
     FrameFlag, FrameHeader, DEFINED_FLAGS, FIXED_LENGTH, MAGIC, PROTOCOL_VERSION, RESERVED_FLAGS,
 };
 pub use limits::Limits;
+pub use wire::{
+    enables_compression, should_compress, wire_size, wire_size_compressed, CompressionDecision,
+    FrameView, FrameViewError, HeaderTemplate, TemplateError, COMPRESSION_DENOMINATOR,
+    COMPRESSION_MIN_BODY, COMPRESSION_NUMERATOR, DEFLATE_STORED_OVERHEAD,
+};
