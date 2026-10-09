@@ -19,6 +19,24 @@ implementations could be **run**. In this development environment the C# can be 
 not a matter of a package manager. So the Kotlin has never been through a compiler here, and no commit
 in this repository may claim that it has.
 
+> **Correction (2026-10-09, after this ADR was accepted).** The sentence above is wrong in its second
+> half, and it is left standing because an ADR is a record of what was decided and on what grounds,
+> not a document to be quietly revised when the grounds change. The Kotlin builds.
+>
+> Two facts were wrong. `android/core-protocol` is a **plain Kotlin/JVM module with no Android
+> dependency**, which its own `build.gradle.kts` states; and this machine had a full Android SDK all
+> along, at `C:\Users\GHC\AndroidSdk`. The one thing missing was `ANDROID_HOME`, and every check that
+> concluded "no SDK" was reading that variable rather than looking at the disk. A `gradle wrapper` then
+> supplied the rest, and the module compiled, tested, and failed in 1111 places and then 10 more.
+>
+> So the reasoning in this ADR is intact and its premise is not. Rust was already the right core for the
+> reason given — it compiles and runs — and the Kotlin now does too, which strengthens the sibling model
+> rather than weakening it: three implementations, three builds, one set of vectors. The mirror is kept
+> for the reason in the consequences below, not retired, because it checks arithmetic the compiler does
+> not. See `docs/findings/kotlin-never-compiled.md` and `docs/findings/kotlin-suite-ten-failures.md`.
+>
+> The transferable lesson is in the last bullet of the consequences.
+
 The response so far was the Kotlin mirror: `protocol/tools/check-kotlin-vectors.cjs` ports the Kotlin's
 arithmetic to JavaScript and runs it against the real vector files. It is a genuine technique and it has
 found real defects — six in the frame classifier, one video clamp, one AUTH transition, one
@@ -114,21 +132,33 @@ them.
 1. **The truthfulness rule is now stricter, not looser.** `cargo test` passing is evidence. The Kotlin
    mirror passing is not, and nothing may describe it otherwise. The mirror's own output must keep
    saying so.
-2. **CI must run the Rust gate.** `.github/workflows/ci.yml` does, and it deliberately has **no Kotlin
-   job**: a job that cannot run would have to be skipped, and a skipped job reports success — the
-   failure mode this ADR and ADR-0007 both exist to avoid.
-3. **The Kotlin must compile in CI eventually.** This ADR does not fix that and must not be read as
-   excusing it. The mirror is a workaround with a known blind spot, and the workaround should be retired
-   rather than kept because it is cheap.
+2. **CI must run the Rust gate.** `.github/workflows/ci.yml` does. ~~and it deliberately has **no Kotlin
+   job**~~ — **superseded by the correction above:** there is now a `kotlin` job, because the module
+   builds with a JDK and the committed wrapper and no Android SDK. The reasoning that produced the
+   absence — a job that cannot run would have to be skipped, and a skipped job reports success — was
+   sound; the belief that it could not run was not.
+3. **The Kotlin must compile in CI eventually.** ~~This ADR does not fix that and must not be read as
+   excusing it.~~ **Done**, per the correction above. Two amendments to how this obligation resolves:
+   the mirror is **not** retired, because it checks arithmetic the compiler does not and keeps working
+   when the module does not compile; and the mirror is no longer the Kotlin's only evidence, which was
+   the condition under which this ADR said the workaround was tolerable.
 4. **A defect found in a fixture is a protocol-owner decision.** Regenerating the four broken bodies in
    `framing-basic.json` is the honest fix and is **not** done by this ADR, because changing committed
    conformance vectors is a change to the interop contract, not a side effect of adding an
    implementation.
+5. **A claim that something cannot be built here is a claim to verify against the disk, not against an
+   environment variable.** This is the lesson the correction above paid for. "No Android SDK" was
+   concluded from `ANDROID_HOME` being unset while the SDK sat at `C:\Users\GHC\AndroidSdk`, and that
+   conclusion kept 1111 compile errors and ten test failures out of sight behind a note that was honest
+   about everything except its premise.
 
 ## References
 
 * [ADR-0007](ADR-0007-conformance-vectors-as-the-interop-contract.md) — vectors as the interop contract
 * [ADR-0002](ADR-0002-native-apps-over-cross-platform.md) — native apps over a cross-platform stack
+* [docs/findings/kotlin-never-compiled.md](../findings/kotlin-never-compiled.md)
+* [docs/findings/kotlin-suite-ten-failures.md](../findings/kotlin-suite-ten-failures.md)
 * [docs/findings/framing-body-not-cbor.md](../findings/framing-body-not-cbor.md)
 * [docs/findings/no-registry-severity-check.md](../findings/no-registry-severity-check.md)
 * `rust/crates/droidlab-protocol/`
+* `android/core-protocol/`

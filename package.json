@@ -17,10 +17,13 @@
     "check:readme": "node protocol/tools/check-readme.cjs",
     "check:generated": "node protocol/tools/check-generated.cjs",
     "check:kotlin": "node protocol/tools/check-kotlin-vectors.cjs",
+    "check:kotlin-build": "node protocol/tools/check-kotlin-build.cjs",
     "check:mutation": "node protocol/tools/mutation-check.cjs",
     "check:rust": "cargo fmt --manifest-path rust/Cargo.toml --all --check && cargo clippy --manifest-path rust/Cargo.toml --all-targets --all-features -- -D warnings && cargo test --manifest-path rust/Cargo.toml --all-features",
     "test:protocol": "node protocol/tools/test-vectors/verify.mjs",
-    "check": "npm run check:registry && npm run check:generated && npm run check:kotlin && npm run check:mutation && npm run check:rust && npm run test:protocol && npm run check:readme"
+    "check": "npm run check:registry && npm run check:generated && npm run check:kotlin && npm run check:mutation && npm run check:rust && npm run test:protocol && npm run check:readme",
+    "check:kotlin-full": "npm run check:kotlin && npm run check:kotlin-build",
+    "check:all": "npm run check && npm run check:kotlin-build"
   },
   "config": {
     "commitizen": {

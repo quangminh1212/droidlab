@@ -339,9 +339,19 @@ class HandshakeTranscriptTest {
 
         // An over-long identifier would wrap the two-byte prefix and produce a transcript
         // describing different identifiers than the ones given, which is a collision an
-        // attacker could aim for.
+        // attacker could aim for. Checked through `build`, which is the entry point that
+        // validates: `length` is the arithmetic and deliberately does not throw, so asserting
+        // the refusal on `length` was asserting it in the wrong place -- the test passed a
+        // 65536-character identifier and `length` simply returned its length.
         assertFailsWith<IllegalArgumentException>("an over-long identifier is refused") {
-            HandshakeTranscript.length("x".repeat(65536), "a")
+            HandshakeTranscript.build(
+                "x".repeat(65536),
+                "a",
+                clientNonce,
+                agentNonce,
+                clientPub,
+                agentPub,
+            )
         }
     }
 

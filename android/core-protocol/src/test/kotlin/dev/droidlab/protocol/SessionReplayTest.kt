@@ -260,7 +260,14 @@ class SessionReplayTest {
 
         // Step 3: the controller's first encrypted frame.
         controller.send(messageType(3), sequenceNumber(3), isEncrypted(3))
-        assertEquals(SessionState.ESTABLISHED, controller.state, "the controller is established after AUTH")
+
+        // Sending AUTH does NOT establish the session. The controller has sent its proof but has
+        // not yet checked the agent's, so it is still authenticating; the session is established
+        // when AUTH_OK arrives. The state machine has this right (SessionTransitions.next, under
+        // `SessionMessages.AUTH`) and this assertion had it wrong: it expected ESTABLISHED here,
+        // which contradicts the file's own step-3 expectation and would have made step 4 -- where
+        // the controller receives AUTH_OK, legal only while authenticating -- fail.
+        assertEquals(SessionState.AUTHENTICATING, controller.state, "the controller authenticates after sending AUTH")
         assertTrue(controller.sentEncrypted, "AUTH is the controller's first encrypted frame")
 
         // Step 4: the agent authenticates and answers.
@@ -393,8 +400,8 @@ class SessionReplayTest {
         // first version of this check that used the wrong frame.
         val guarded = SessionReplayer(SessionRole.AGENT)
 
-        guarded.state = SessionState.HANDSHAKING
-        guarded.lastSent = 5
+        guarded.seedForTest(state = SessionState.HANDSHAKING)
+        guarded.seedForTest(lastSent = 5)
 
         val backwards = runCatching { guarded.send(SessionMessages.HELLO_ACK, 5, false) }
 
@@ -407,8 +414,8 @@ class SessionReplayTest {
         // Zero is refused: the numbering starts at one.
         val fresh = SessionReplayer(SessionRole.AGENT)
 
-        fresh.state = SessionState.HANDSHAKING
-        fresh.lastSent = 0
+        fresh.seedForTest(state = SessionState.HANDSHAKING)
+        fresh.seedForTest(lastSent = 0)
 
         assertTrue(
             runCatching { fresh.send(SessionMessages.HELLO_ACK, 0, false) }.isFailure,
@@ -419,8 +426,8 @@ class SessionReplayTest {
         // than every frame: the controller in this transcript sends 1,2,3,4,5 and then 8.
         val jumping = SessionReplayer(SessionRole.AGENT)
 
-        jumping.state = SessionState.HANDSHAKING
-        jumping.lastSent = 5
+        jumping.seedForTest(state = SessionState.HANDSHAKING)
+        jumping.seedForTest(lastSent = 5)
 
         assertTrue(
             runCatching { jumping.send(SessionMessages.HELLO_ACK, 8, false) }.isSuccess,
@@ -442,7 +449,7 @@ class SessionReplayTest {
         repeated.received.add(8)
         repeated.received.add(9)
         repeated.received.add(10)
-        repeated.lastReceived = 10
+        repeated.seedForTest(lastReceived = 10)
 
         val windowFloor = repeated.lastReceived!! - 32
 
@@ -461,7 +468,7 @@ class SessionReplayTest {
 
         val plainAuth = SessionReplayer(SessionRole.CONTROLLER)
 
-        plainAuth.state = SessionState.AUTHENTICATING
+        plainAuth.seedForTest(state = SessionState.AUTHENTICATING)
 
         assertTrue(
             runCatching { plainAuth.send(SessionMessages.AUTH, 1, false) }.isFailure,

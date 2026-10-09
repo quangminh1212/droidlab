@@ -338,14 +338,24 @@ class CapabilityNegotiationTest {
     private fun assertVideoClamp(v: JsonValue, expectedKey: String, screenKey: String?) {
         val id = v["id"]!!.asString()
         val requested = v["requested"] ?: error("$id has no requested object")
-        val limits = v["agent_limits"] ?: error("$id has no agent_limits object")
         val expected = v[expectedKey] ?: error("$id has no $expectedKey object")
 
-        val agentLimits = CapabilityNegotiation.Limits(
-            maxVideoWidth = limits["max_video_width"]!!.asInt(),
-            maxVideoHeight = limits["max_video_height"]!!.asInt(),
-            maxVideoFps = limits["max_video_fps"]?.asInt() ?: CapabilityNegotiation.Limits().maxVideoFps,
-        )
+        // `agent_limits` is optional, and the screen-size vector omits it deliberately: its point
+        // is the screen clamp, so it exercises the default limits rather than a declared set. The
+        // first version of this helper required the object and crashed on the fixture, which is
+        // the wrong failure -- a fixture that is legal should not be able to break a test.
+        val defaults = CapabilityNegotiation.Limits()
+        val limits = v["agent_limits"]
+
+        val agentLimits = if (limits == null || limits is JsonValue.Nul) {
+            defaults
+        } else {
+            CapabilityNegotiation.Limits(
+                maxVideoWidth = limits["max_video_width"]?.asInt() ?: defaults.maxVideoWidth,
+                maxVideoHeight = limits["max_video_height"]?.asInt() ?: defaults.maxVideoHeight,
+                maxVideoFps = limits["max_video_fps"]?.asInt() ?: defaults.maxVideoFps,
+            )
+        }
 
         // A vector without a screen isolates the ceiling clamp, so the screen is the requested
         // size: with no capture surface to fit inside the ceiling, the effective size is the
@@ -504,7 +514,7 @@ class CapabilityNegotiationTest {
         assertEquals("rejected", v["expected"]!!.asString(), "$id is declared rejected")
 
         assertFalse(verdict.accepted, "$id is refused")
-        assertEquals(v["expected_error"]!!.asString(), verdict.error?.name, "$id error code")
+        assertEquals(v["expected_error"]!!.asStringOrNull(), verdict.error?.wireName, "$id error code")
 
         // And it is refused rather than clamped: a truncated chunk would be a silently short
         // buffer the controller believes is full, which is indistinguishable from a short file.
@@ -642,7 +652,7 @@ class CapabilityNegotiationTest {
         // The fault is a state error specifically, and the code matters: reporting a limit
         // error would suggest retrying, when the correct response is to close the channel
         // first. A retry would loop forever against the same open id.
-        assertEquals(v["expected_error"]!!.asString(), verdict.error?.name, "$id error code")
+        assertEquals(v["expected_error"]!!.asStringOrNull(), verdict.error?.wireName, "$id error code")
 
         // A fresh id is accepted, so the refusal is about reuse and not about opening.
         val fresh = CapabilityNegotiation.openChannel(
@@ -671,10 +681,16 @@ class CapabilityNegotiationTest {
         val refused = CapabilityNegotiation.openChannel(100, atLimit, max)
 
         assertFalse(refused.accepted, "opening past the limit is refused")
-        assertEquals(ErrorCode.CHANNEL_LIMIT.name, refused.error?.name, "the fault is a limit, not a state")
+        assertEquals(ErrorCode.CHANNEL_LIMIT.wireName, refused.error?.wireName, "the fault is a limit, not a state")
 
-        // One below is accepted.
-        val oneBelow = atLimit - max.toLong() + 1
+        // One below is accepted. The scenario is every id from 0 to max-1, so opening `max` is
+        // the case past the limit and the case that must still be refused is tested above; here
+        // the set is one channel smaller and the same new id must fit. The subtraction is of the
+        // *id set's* last element rather than of `max`, which is what an earlier version got
+        // wrong by adding one instead.
+        val oneBelow = atLimit - (max - 1).toLong()
+
+        assertEquals(max - 1, oneBelow.size, "the scenario is one channel below the limit")
 
         val accepted = CapabilityNegotiation.openChannel(100, oneBelow, max)
 

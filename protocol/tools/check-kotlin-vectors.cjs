@@ -4788,4 +4788,14 @@ console.log('ok    cbOR shortest-encoding boundaries and the canonical empty bod
 console.log('ok    all 22 malformed vectors and all 3 sequence vectors classify as declared');
 console.log('');
 console.log('NOTE  This validates the Kotlin logic, NOT that the Kotlin compiles.');
-console.log('      android/core-protocol has never been through a compiler here.');
+console.log('      This mirror is one of TWO Kotlin checks and is not the stronger one.');
+console.log('      `npm run check:kotlin-build` compiles and tests android/core-protocol');
+console.log('      for real, and CI runs it. Keep both: this one checks arithmetic the');
+console.log('      compiler does not, and it keeps working when the module does not build.');
+console.log('');
+console.log('      History worth keeping: for a long time this note said the module had');
+console.log('      "never been through a compiler here", and that was believed to be an');
+console.log('      environment limit. It was not -- the module is plain Kotlin/JVM and this');
+console.log('      machine had a JDK and an Android SDK. The first real build found 1111');
+console.log('      compile errors and then 10 failing tests. See');
+console.log('      docs/findings/kotlin-never-compiled.md.');

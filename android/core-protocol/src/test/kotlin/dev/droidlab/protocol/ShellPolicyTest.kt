@@ -215,7 +215,7 @@ class ShellPolicyTest {
                     val rejection = verdict as ShellPolicy.Verdict.Rejected
 
                     assertEquals(
-                        c["expected_error"]!!.asString(),
+                        c["expected_error"]!!.asStringOrNull(),
                         rejection.code.wireName,
                         "the case \"$id\" has its declared error",
                     )
@@ -747,7 +747,7 @@ class ShellPolicyTest {
         assertEquals("suspended", limit["expected"]!!.asString(), "the expected state is suspended")
         assertEquals(
             ErrorCode.PERMISSION_DENIED.wireName,
-            limit["expected_error"]!!.asString(),
+            limit["expected_error"]!!.asStringOrNull(),
             "with a permission denial, not a rate error",
         )
 

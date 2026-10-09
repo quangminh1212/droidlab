@@ -162,7 +162,7 @@ class MalformedTest {
 
             assertEquals(expected, verdict.outcome, "$id outcome")
             assertEquals(
-                v["expected_error"]?.asString()?.let { ErrorCode.fromWireName(it) },
+                v["expected_error"]?.asStringOrNull()?.let { ErrorCode.fromWireName(it) },
                 verdict.error,
                 "$id error code",
             )
@@ -170,8 +170,14 @@ class MalformedTest {
             // The severity is derived from the code rather than stored separately, which is
             // the point: a classification cannot report a fatal outcome with a recoverable
             // code, because there is only one place the severity lives.
-            if (v["expected_severity"] != null) {
-                val severity = v["expected_severity"]!!.asString()
+            //
+            // `asStringOrNull` rather than a null test plus `asString`: the property is present
+            // and explicitly null on the vector that is declared to succeed, so `!= null` is
+            // true and what follows is `Nul`. This crashed on the fixture until the module was
+            // first compiled (see docs/findings/kotlin-never-compiled.md).
+            val severity = v["expected_severity"]?.asStringOrNull()
+
+            if (severity != null) {
                 val fatal = severity == "fatal"
 
                 if (fatal) {
@@ -369,7 +375,7 @@ class MalformedTest {
 
         assertEquals("error_frame_then_close", v["expected"]!!.asString())
 
-        val body = v["body"]!!.entries.keys
+        val body = v["body"]!!.asObject().keys
         val messageType = v["message_type"]!!.asInt()
 
         // INPUT_TOUCH requires at least the action and the pointers. The vector carries one.
@@ -400,7 +406,7 @@ class MalformedTest {
 
         assertEquals("accepted", v["expected"]!!.asString())
 
-        val body = v["body"]!!.entries.keys
+        val body = v["body"]!!.asObject().keys
         val messageType = v["message_type"]!!.asInt()
         val known = setOf("action", "pointers")
 
@@ -458,7 +464,7 @@ class MalformedTest {
                 }
             }
 
-            val expectedError = v["expected_error"]?.asString()?.let { ErrorCode.fromWireName(it) }
+            val expectedError = v["expected_error"]?.asStringOrNull()?.let { ErrorCode.fromWireName(it) }
 
             if (expectedError == null) {
                 // The vector declares no error, so the whole sequence must be accepted.
@@ -536,9 +542,16 @@ class MalformedTest {
         // Every code the vectors name is checked against the severity they declare, so a
         // classification cannot report a fatal outcome with a recoverable code.
         for (v in vectors()) {
-            val errorName = v["expected_error"]?.asString() ?: continue
+            val errorName = v["expected_error"]?.asStringOrNull() ?: continue
+
+            // A vector that declares a code may still omit the severity, and one that declares
+            // no code has neither. Skipping on the missing severity rather than forcing `!!` is
+            // what makes this robust against a fixture that is legal but less complete -- the
+            // `!!` version crashed with a ClassCastException on `Nul`, which reported the
+            // fixture's shape rather than the rule under test.
+            val severity = v["expected_severity"]?.asStringOrNull() ?: continue
+
             val code = ErrorCode.fromWireName(errorName) ?: error("unknown code $errorName")
-            val severity = v["expected_severity"]!!.asString()
 
             assertEquals(
                 severity == "fatal",

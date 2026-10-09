@@ -56,8 +56,15 @@ tasks.test {
 // Resolving them here rather than copying them is the point of ADR-0007: a copy
 // would be a second source of truth, and the copy that is not checked is the one
 // that drifts.
+//
+// Wrapped in `providers.provider { }` so the value is a lazy `Provider<Directory>`.
+// Assigning the `Directory` directly does not compile: Kotlin infers `Directory!` and
+// the declared type is `Provider<Directory>`. This is precisely the class of defect the
+// JavaScript Kotlin mirror cannot see -- it ports arithmetic, never types -- and it is
+// why this module is now compiled rather than mirrored. See
+// docs/findings/kotlin-never-compiled.md.
 val vectorsDirectory: Provider<Directory> =
-    layout.projectDirectory.dir("../../protocol/vectors")
+    providers.provider { layout.projectDirectory.dir("../../protocol/vectors") }
 
 tasks.test {
     systemProperty("droidlab.vectors", vectorsDirectory.get().asFile.absolutePath)

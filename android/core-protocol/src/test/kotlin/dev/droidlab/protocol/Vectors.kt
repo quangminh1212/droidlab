@@ -97,10 +97,18 @@ object Vectors {
      * that uses this exists to catch.
      *
      * @return the wire code of each message type, by name.
+     * The registry stores `message_types` as an ARRAY of entries, each carrying its own `code`
+     * and `name`. Reading it as an object keyed by index -- which an earlier version of this
+     * helper did -- fails with a ClassCastException the moment it runs, because the parsed value
+     * is an `Arr` and not an `Obj`. The array is the right shape for a registry entry list: the
+     * position carries no meaning, and treating a position as a code is exactly the mistake this
+     * helper exists to prevent.
+     *
+     * @return the wire code of each message type, by name.
      */
     fun registryMessageCodes(): Map<String, Int> =
         buildMap {
-            for ((_, definition) in registry()["message_types"]!!.asObject()) {
+            for (definition in registry()["message_types"]!!.asArray()) {
                 put(definition.require("name").asString(), definition.require("code").asInt())
             }
         }
@@ -112,7 +120,7 @@ object Vectors {
      */
     fun registryUnencryptedMessages(): Set<String> =
         buildSet {
-            for ((_, definition) in registry()["message_types"]!!.asObject()) {
+            for (definition in registry()["message_types"]!!.asArray()) {
                 if (!definition.require("encrypted").asBoolean()) {
                     add(definition.require("name").asString())
                 }
@@ -164,13 +172,7 @@ object Vectors {
  */
 sealed interface JsonValue {
     /** An object. */
-    data class Obj(val entries: LinkedHashMap<String, JsonValue>) : JsonValue {
-        operator fun get(key: String): JsonValue? = entries[key]
-
-        /** The property, or a failure naming it. */
-        fun require(key: String): JsonValue =
-            entries[key] ?: throw NoSuchElementException("no property \"$key\"")
-    }
+    data class Obj(val entries: LinkedHashMap<String, JsonValue>) : JsonValue
 
     /** An array. */
     data class Arr(val items: List<JsonValue>) : JsonValue
@@ -187,8 +189,34 @@ sealed interface JsonValue {
     /** Null. */
     data object Nul : JsonValue
 
-    /** This value as a string. */
-    fun asString(): String = (this as Str).value
+    /**
+     * This value as a string.
+     *
+     * A number is rendered rather than rejected, because the vectors carry numeric fields
+     * (a port, an API level) that a test compares against a string, and forcing every call site
+     * to branch on `Num` first would put the same branch in a dozen tests. A non-scalar is a
+     * fixture mistake and throws with the type's name.
+     */
+    fun asString(): String = when (this) {
+        is Str -> value
+        is Num -> integral?.toString() ?: value.toString()
+        is Bool -> value.toString()
+        else -> throw ClassCastException("cannot read $this as a string")
+    }
+
+    /**
+     * This value as a string, or `null` when it is cbOR/JSON `null`.
+     *
+     * Needed because a vector's `expected_error` is present and `null` for the vectors that are
+     * declared to succeed. Kotlin's `?.` does not help there: the property exists, so the safe
+     * call proceeds, and what it reaches is [Nul] rather than a missing value. The alternative
+     * -- testing `is JsonValue.Nul` at every call site -- puts the same three-line branch in a
+     * dozen tests, and one test that forgot it crashed on the *fixture* rather than the rule
+     * (see `MalformedTest.everyRawFrameVectorMatchesItsDeclaredOutcome`).
+     *
+     * @return the string, or `null` for an explicit null.
+     */
+    fun asStringOrNull(): String? = if (this is Nul) null else asString()
 
     /** This value as an integer. */
     fun asInt(): Int = (this as Num).let { it.integral?.toInt() ?: it.value.toInt() }
@@ -210,6 +238,29 @@ sealed interface JsonValue {
      * `Obj` type and cannot accidentally mutate the parsed document.
      */
     fun asObject(): Map<String, JsonValue> = (this as Obj).entries.toMap()
+
+    /**
+     * The property of an object, or `null` when this is not an object or the key is absent.
+     *
+     * Declared on the interface rather than only on [Obj] because the parser returns a
+     * `JsonValue`, and a caller that has just loaded a file starts from one. With the operator
+     * on `Obj` alone, `loaded["vectors"]` does not compile -- which is one of the errors the
+     * module shipped with, and the reason this is here rather than on the subclass where it
+     * looks tidier.
+     *
+     * @param key the property name.
+     * @return the value, or `null`.
+     */
+    operator fun get(key: String): JsonValue? = (this as? Obj)?.entries?.get(key)
+
+    /**
+     * The property of an object, or a failure naming it.
+     *
+     * @param key the property name.
+     * @return the value.
+     */
+    fun require(key: String): JsonValue =
+        get(key) ?: throw NoSuchElementException("no property \"$key\" in $this")
 }
 
 /**

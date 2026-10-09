@@ -9,6 +9,7 @@ commands, move files and stream logs — over Wi-Fi, with no cable and no cloud.
 
 [![Protocol](https://img.shields.io/badge/protocol-DLWP%2F1-2f6f4e)](#the-dlwp1-protocol)
 [![Conformance](https://img.shields.io/badge/conformance-84%2F84%20checks-2f6f4e)](#verifying-the-protocol)
+[![Tests](https://img.shields.io/badge/tests-923%20passing-2f6f4e)](#verifying-the-protocol)
 [![Licence](https://img.shields.io/badge/licence-Apache--2.0-blue)](LICENSE)
 [![Android](https://img.shields.io/badge/android-11%2B%20(API%2030%2B)-3ddc84)](#requirements)
 [![Windows](https://img.shields.io/badge/windows-10%20%7C%2011-0078d4)](#requirements)
@@ -31,15 +32,20 @@ workstation: you can see it, tap it, script it, and point existing `adb`-aware
 tooling at it.
 
 > **Status: specification complete; the protocol codecs are implemented in C#, Rust and
-> Kotlin.** The wire protocol, the security model, the shell safety policy and the
-> 84-check conformance vector set are finished. The C# implementation is complete
-> (`dotnet test` → 583 passing, 0 warnings), and the **Rust reference core** compiles and
-> passes its own suite (`cargo test` → 78 passing, `cargo clippy -D warnings` clean) — see
-> [ADR-0008](docs/adr/ADR-0008-rust-as-the-reference-core.md) for why Rust is the core and
-> the other two are siblings. The Kotlin sibling exists with conformance tests wired to the
-> same vectors — **but it has never been compiled**, because this project has no Android SDK
-> or Gradle available to it. That distinction is stated wherever it applies and is not
-> glossed over. See [Roadmap](#roadmap) for what is done and what is not, and
+> Kotlin, and all three now compile and pass their tests.** The wire protocol, the security
+> model, the shell safety policy and the 84-check conformance vector set are finished. The C#
+> implementation is complete (`dotnet test` → 583 passing, 0 warnings). The **Rust reference
+> core** compiles and passes its own suite (`cargo test` → 235 passing, `cargo clippy -D warnings`
+> clean) — see [ADR-0008](docs/adr/ADR-0008-rust-as-the-reference-core.md) for why Rust is the
+> core and the other two are siblings. The **Kotlin sibling compiles and passes its 105 tests**
+> for the first time in this repository's history; it had never been built, because "this project
+> has no Android SDK" was believed and was false — `android/core-protocol` is a plain Kotlin/JVM
+> module, and the machine had a JDK and an Android SDK all along. Its first build found 1111
+> compile errors and ten failing tests. Both are fixed, both are gated in CI, and both are
+> recorded as findings rather than quietly corrected: see
+> [`kotlin-never-compiled.md`](docs/findings/kotlin-never-compiled.md) and
+> [`kotlin-suite-ten-failures.md`](docs/findings/kotlin-suite-ten-failures.md). See
+> [Roadmap](#roadmap) for what is done and what is not, and
 > [Verifying the protocol](#verifying-the-protocol) for exactly what is proven.
 
 ### What you get
@@ -266,7 +272,7 @@ Policy source of truth: [RFC-0004](docs/rfc/RFC-0004-shell-safety.md).
 | **Windows** | 10 or 11, x64 or arm64 |
 | **Network** | Both devices on the same LAN. No internet access required. |
 | **ADB** (optional) | Platform-tools on `PATH`, for `adb`-based tooling only |
-| **Build from source** | JDK 17+, Android SDK 34+, .NET 8 SDK, Node.js 20+ |
+| **Build from source** | JDK 17+, Android SDK 34+ (agent only), .NET 8 SDK, Node.js 20+ |
 
 ---
 
@@ -279,6 +285,9 @@ cd droidlab
 # Protocol checks — no toolchain beyond Node.js required
 npm ci
 npm run check
+
+# Everything, including the compiled Kotlin core (needs JDK 17)
+npm run check:all
 ```
 
 ```powershell
@@ -289,6 +298,19 @@ cd android
 # Windows controller  ->  windows/DroidLab.App/bin/Release/net8.0-windows/DroidLab.App.exe
 cd ..\windows
 dotnet publish DroidLab.App -c Release
+```
+
+> The protocol core builds today; the two applications do not yet exist. `droidlab/app` and
+> `DroidLab.App` are M2–M4 work, and the commands above are the shape they will have rather than
+> commands that run now. The one command that does build something you can run is
+> `npm run check:all`.
+
+The Kotlin protocol core is a plain JVM module with no Android dependency, so it builds with a
+JDK and the checked-in Gradle wrapper and nothing else:
+
+```bash
+cd android
+./gradlew :core-protocol:test
 ```
 
 ---
@@ -390,9 +412,11 @@ A generated file that is committed and never checked is worse than a hand-writte
 it looks authoritative and cannot be edited, so when it drifts from its source nobody
 notices and readers trust the stale copy.
 
-**4. Kotlin conformance mirror** — the Android protocol core cannot be compiled here, so
-its arithmetic is reimplemented in JavaScript within the gate and run against the same
-vector files. This is evidence for the Kotlin's *logic* and never for its compilation:
+**4. Kotlin conformance mirror** — the Kotlin's arithmetic is reimplemented in JavaScript within
+the gate and run against the same vector files. This is evidence for the *logic of the rules* and
+never for the Kotlin's compilation. It is kept alongside the real build (step 7) because the two
+check different things: this one keeps working when the module does not compile, and that is
+exactly when it is worth having:
 
 ```text
 ok    1461 Kotlin-mirrored checks hold against the real vectors
@@ -402,6 +426,10 @@ ok    all 22 malformed vectors and all 3 sequence vectors classify as declared
 
 NOTE  This validates the Kotlin logic, NOT that the Kotlin compiles.
 ```
+
+That caveat was doing more work than anyone had measured. It was accurate, and it turned out to
+be hiding 1111 compile errors and ten failing tests, because a mirror of the arithmetic cannot
+see a missing import, an ambiguous overload or a wrong argument count. See step 7.
 
 **5. Mutation check** — breaks the mirrored logic on purpose, one rule at a time, and
 fails if the gate does not notice. A check that cannot fail is worse than no check,
@@ -421,25 +449,25 @@ well as that its logic is right:
 ```text
 cargo fmt --all --check                         -> clean
 cargo clippy --all-targets --all-features -D warnings -> clean
-cargo test --all-features                       -> 79 passed, 0 failed
+cargo test --all-features                       -> 235 passed, 0 failed
 ```
 
 The suite is 78 integration tests plus the crate's own doctest, and it reads the same
 `protocol/vectors/` files the other two do. Four claims it makes that nothing else did:
 
-* **The framing vectors' bodies are not valid cbOR.** Four of the six carry a truncated
+- **The framing vectors' bodies are not valid cbOR.** Four of the six carry a truncated
   tail of the body their own `decoded.body` describes, with one length prefix off by one.
   Neither the C# suite nor the Kotlin mirror had ever parsed a `body_hex` as cbOR, so two
   implementations passed over it. See
   [docs/findings/framing-body-not-cbor.md](docs/findings/framing-body-not-cbor.md).
-* **`RegistryConformanceTests` does not exist.** `ErrorCode.cs` documents a test that
+- **`RegistryConformanceTests` does not exist.** `ErrorCode.cs` documents a test that
   asserts its table agrees with `protocol/registry/dlwp-1.json`; nothing in the repository
   does. The severity table is correct today, but by hand. See
   [docs/findings/no-registry-severity-check.md](docs/findings/no-registry-severity-check.md).
-* **The registry assigns no numbers to error codes.** Unlike `message_types`, whose entries
+- **The registry assigns no numbers to error codes.** Unlike `message_types`, whose entries
   carry `"code": 1`, error-code entries have only `code` and `severity` — so an error code
   is identified on the wire only by its name.
-* **The transport's savings are measured, not claimed.** 720 bytes of header recomputation
+- **The transport's savings are measured, not claimed.** 720 bytes of header recomputation
   saved over a one-second 60 fps stream, zero allocations per borrowed frame, and a
   compression threshold calibrated against the 81-byte hot-path body the vectors name.
 
@@ -460,7 +488,7 @@ that no input can distinguish from its absence is one that will silently stop wo
 the comparison changes.
 
 **6. README consistency check** — reads the numbers out of this file and fails if they
-no longer match the run (43 checks):
+no longer match the run (47 checks):
 
 ```text
 ok    checks passed = 84 (README and the run agree)
@@ -468,27 +496,73 @@ ok    checks failed = 0 (README and the run agree)
 ok    warnings = 0 (README and the run agree)
 ok    error codes = 22 (registry and README agree)
 
-All 43 README checks passed.
+All 47 README checks passed.
 ```
+
+**7. Kotlin protocol core** — compiled and tested on every commit, which it was not before. This
+step needs a JDK 17 and the checked-in Gradle wrapper and nothing else: `android/core-protocol`
+is a plain Kotlin/JVM module with no Android dependency, which its own build file states, so the
+"no Android SDK" reason for its absence applied to nothing:
+
+```text
+> gradlew :core-protocol:compileKotlin :core-protocol:compileTestKotlin
+BUILD SUCCESSFUL
+
+> gradlew :core-protocol:test
+105 tests completed, 0 failed
+BUILD SUCCESSFUL
+```
+
+The first run of this step is the reason it exists:
+
+```text
+1111  compile errors on the first build attempt, across library and test source
+  10  tests that then failed, of which no product defect accounted for one
+```
+
+The errors were ordinary — a missing `SortedSet` import, a `Pair` handed where two arguments were
+wanted, an `operator get` declared on a subclass while callers hold the interface — and every one
+of them is invisible to a JavaScript mirror, which is what the module was relying on. The ten
+failures were six wrong assertions and four defects in the shared fixture reader `Vectors.kt`,
+each of which made a *legal* vector file crash the test reading it. No product defect was found:
+the state machine, the fingerprint derivation, the channel limit and the transcript validation
+were all right, and four of the ten failures were tests disagreeing with code that was correct.
+See [docs/findings/kotlin-never-compiled.md](docs/findings/kotlin-never-compiled.md) and
+[docs/findings/kotlin-suite-ten-failures.md](docs/findings/kotlin-suite-ten-failures.md).
+
+Both Kotlin steps stay. The mirror keeps working when the module does not compile, and the
+compiler sees the whole class of defects the mirror cannot. Retiring either one would trade a
+blind spot for a different blind spot.
 
 ### What is verified, and what is not
 
 The three implementations are siblings under ADR-0007: the vectors are the only interop
 contract between them, and no language is the reference for another *by construction*. Rust
 is the **reference core** in a narrower, practical sense that ADR-0008 defines: it is the one
-that compiles and runs here, so a disagreement starts its investigation there. They are *not*
-verified to the same degree, and the difference matters.
+that compiles and runs here, so a disagreement starts its investigation there. All three now
+build and pass their own tests, and they still differ in how much of the protocol they cover.
 
 | | Rust (`rust/crates/droidlab-protocol`) | C# (`windows/DroidLab.Protocol`) | Kotlin (`android/core-protocol`) |
 | --- | --- | --- | --- |
-| Builds here | ✅ `cargo test`, `cargo clippy -D warnings` | ✅ `dotnet test` | ❌ no Android SDK, no Gradle |
-| Conformance vectors | 🟡 framing + cbOR + registry + limits; crypto and session pending | ✅ 84/84 | ⚠️ wired to the same files; **never run** |
-| Unit tests | ✅ 79 passing, 0 warnings | ✅ 583 passing, 0 warnings | ⚠️ written; **never compiled** |
+| Builds here | ✅ `cargo test`, `cargo clippy -D warnings` | ✅ `dotnet test` | ✅ `gradlew test` (JDK 17 + wrapper, no Android SDK) |
+| Conformance vectors | 🟡 framing + cbOR + registry + limits; crypto and session pending | ✅ 84/84 | ✅ 105 own tests reading the same vector files |
+| Unit tests | ✅ 235 passing, 0 warnings | ✅ 583 passing, 0 warnings | ✅ 105 passing, 0 warnings |
 | Panics in the codec | 🚫 denied by lint (`unwrap`, `expect`, `panic`, indexing) | ⚠️ no exceptions in the codec by convention | ⚠️ no exceptions in the codec by convention |
-| Warnings as errors | ✅ `-D warnings`, `RUSTFLAGS=-D warnings` in CI | ✅ `TreatWarningsAsErrors=true` | ✅ configured, unenforced here |
+| Warnings as errors | ✅ `-D warnings`, `RUSTFLAGS=-D warnings` in CI | ✅ `TreatWarningsAsErrors=true` | ✅ `allWarningsAsErrors.set(true)`, enforced in CI |
 
-The Kotlin side cannot be built on a machine without an Android SDK and Gradle, which is
-the case for the environment this was written in. What that means concretely:
+The Kotlin row used to read "never compiled" for every column, and the correction is the whole
+point of this table: the module was not unverified because it was hard to verify. It was
+unverified because a check for an Android SDK came back negative on a machine that had one, and
+the conclusion drawn from that was that building it was impossible rather than that the check
+was wrong. `ANDROID_HOME` was simply unset.
+
+### The lesson this repository learned about "cannot be built here"
+
+Everything below was true when it was written and the conclusion drawn from it was wrong, so it
+is kept as written and then corrected, rather than deleted.
+
+What was believed: the Kotlin side cannot be built on a machine without an Android SDK and
+Gradle, which is the case for the environment this was written in. What follows from that:
 
 - The **fixture assumptions** were checked by reading the same field names out of the same
   vector files with a script. This caught three real mistakes — a wrong field name, a
@@ -500,16 +574,35 @@ the case for the environment this was written in. What that means concretely:
 - None of that is evidence that the Kotlin **compiles**. A file that has never been
   through a compiler is unverified, and calling it verified because a port of its logic
   passes would be exactly the kind of claim the rest of this repository refuses to make.
-- The Kotlin mirror is a workaround with a known blind spot: it cannot see a type error, a
-  missing symbol, or a wrong import. It stays because it checks arithmetic nothing else
-  does, and it should be retired once the Kotlin compiles in CI — not kept because it is
-  cheap.
 
-Rust does not have that blind spot, which is the whole reason it is the core. Its 235 tests
-run on every commit and its output is evidence that the code exists, compiles, and behaves.
+That reasoning is sound and its last clause is the one that mattered. The mistake was one step
+earlier: the premise. `android/core-protocol` is a plain Kotlin/JVM module that depends on
+nothing Android, and the machine had a JDK 17, Visual Studio and a complete Android SDK. What it
+did not have was `ANDROID_HOME`, and the check that concluded "no SDK" was reading an environment
+variable rather than looking at the disk. `gradle wrapper` then supplied the one thing actually
+missing.
 
+So the third bullet above — "a file that has never been through a compiler is unverified" — was
+the correct instinct applied to the wrong fact, and it stayed correct while the module carried
+1111 compile errors and ten failing tests. The audit trail is the useful artefact:
 
-The vectors are the interoperability contract. Two independent implementations —
+- The Kotlin mirror is kept, and **not** retired on the grounds that the Kotlin now compiles. It
+  checks arithmetic the compiler does not, and it keeps working when the module does not build;
+  the compiler checks a whole class of defect the mirror cannot see. Retiring either would trade
+  one blind spot for another.
+- `npm run check:kotlin-build` compiles and tests the module and runs in CI. `npm run check:all`
+  runs it alongside the rest.
+- The rule that comes out of it: **a check for whether a thing can be built must look at the
+  disk, not at an environment variable**, and "we cannot build it here" is a claim to verify
+  before acting on it.
+
+Rust was already the core for the right reason — it compiles and runs — and its 235 tests still
+run on every commit. The Kotlin now joins it, which changes M1's status and nothing about
+ADR-0008's argument.
+
+### The vectors
+
+The vectors are the interoperability contract. Three independent implementations —
 the Kotlin codec and the C# codec — load the same files and must produce byte-identical
 results. A vector that cannot be reproduced from its own inputs is treated as a defect,
 because it makes wrong behaviour look verified.
@@ -547,18 +640,22 @@ droidlab/
 │   └── crates/
 │       └── droidlab-protocol/  DLWP/1 codec, cbOR, limits, wire efficiency  ← builds & tests
 ├── android/                 Android agent — the APK
-│   └── core-protocol/       DLWP/1 codec (mirrors DroidLab.Protocol)        ← exists, uncompiled
+│   └── core-protocol/       DLWP/1 codec (mirrors DroidLab.Protocol)        ← builds & tests
 ├── windows/                 Windows controller — the EXE
-│   ├── DroidLab.Protocol/   DLWP/1 codec, crypto, session state             ← exists
-│   └── DroidLab.Tests/      xUnit suite (583 tests)                         ← exists
+│   ├── DroidLab.Protocol/   DLWP/1 codec, crypto, session state             ← builds & tests
+│   └── DroidLab.Tests/      xUnit suite (583 tests)                         ← builds & tests
 ├── docs/findings/           Defects found in the fixtures and the specs
 ├── scripts/                 Build and release automation
 └── .github/                 CI workflows and templates
 ```
 
-Modules marked `← exists` are the ones implemented today; the rest of the tree is
+Modules marked `← builds & tests` are the ones implemented today; the rest of the tree is
 planned and is listed here so its boundaries are fixed before the code that has to
 respect them is written. Nothing is claimed to exist that does not.
+
+`.github/workflows/ci.yml` has one job per implementation, plus the language-independent gates.
+Each of the three codecs is compiled and tested on every commit, which is what M1's completion
+rests on.
 
 The `rust/crates/droidlab-protocol`, `android/core-protocol` and `windows/DroidLab.Protocol`
 codecs are **siblings, not shared libraries**. They must not reference each other; the
@@ -581,24 +678,24 @@ cannot yet assert them it asserts that it cannot.
 | Milestone | Scope | Status |
 | --------- | ----- | ------ |
 | **M0 — Specification** | RFC-0001…0004, ADRs, schemas, registries, conformance vectors, verifiers | ✅ Complete |
-| **M1 — Protocol codecs** | C# codec (583 tests, 84/84 vectors); Rust reference core (235 tests, all ten vector files wired); Kotlin sibling written and **not yet compiled** | 🟡 C# done, Rust in progress, Kotlin unverified |
+| **M1 — Protocol codecs** | C# codec (583 tests, 84/84 vectors); Rust reference core (235 tests, all ten vector files wired); Kotlin sibling (105 tests, compiling and passing for the first time) | ✅ All three build and pass |
 | **M2 — Pairing + discovery** | QR pairing, mDNS advertisement and verification, session establishment | ⬜ Planned |
 | **M3 — Mirror + input** | MediaProjection capture, H.264 streaming, hardware decode, touch/key/text | ⬜ Planned |
 | **M4 — Shell + files + logs** | Allow-listed shell, scoped file transfer, clipboard, logcat | ⬜ Planned |
 | **M5 — ADB integration** | `adb pair`/`connect` flow, endpoint re-resolution, serial surfacing | ⬜ Planned |
 | **M6 — Release engineering** | Signed APK/EXE, CI matrix, reproducible builds, release notes | ⬜ Planned |
 
-M1 is split rather than marked done, because its three implementations are not in the same
-state. The C# codec passes every vector under `dotnet test`. The Rust core compiles, lints
-clean under `-D warnings`, and passes 235 tests across seventeen test binaries — framing,
-malformed framing, cbOR, the error-code registry, the limits, wire efficiency, crypto
-conformance, pairing, frame classification, the message-type registry, capability negotiation,
-version negotiation, discovery advertisement, the session state machine and the shell policy.
-Every one of the ten vector files is now wired to the real vectors on disk. The Kotlin codec is
-written and never compiled, because this project's environment has no Android SDK or Gradle.
-Marking M1 complete would assert something untrue about one of the three, which is the
-failure mode that [What is verified, and what is not](#what-is-verified-and-what-is-not)
-exists to avoid.
+M1 was split rather than marked done for as long as the three implementations were in different
+states, because marking it complete would have asserted something untrue about one of them. All
+three now compile and pass their tests, which is what changed. The protocol layer is finished in
+the sense that matters: three implementations of the same specification agree with the same
+vectors, and each one's build is gated in CI.
+
+It is worth being precise about what M1's completion does *not* mean. It does not mean the
+protocol has been run between two live processes — nothing in M2 exists, so no handshake has ever
+crossed a socket. `session-basic.json` scripts a session and all three implementations replay it,
+which is a strong statement about the state machines agreeing and no statement at all about
+sockets, discovery or a real device. That work is M2 and it is entirely unstarted.
 
 ---
 

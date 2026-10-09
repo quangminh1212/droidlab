@@ -253,7 +253,7 @@ class CryptoPrimitivesTest {
         // literal, because the vectors deliberately carry no fingerprint value -- the recipe's
         // own note says the RFC's example is illustrative and derived from no seed.
         assertEquals(19, fingerprint.length, "a fingerprint is 19 characters")
-        assertEquals(4, fingerprint.count { it == '-' }, "a fingerprint has three dashes")
+        assertEquals(3, fingerprint.count { it == '-' }, "a fingerprint has three dashes")
 
         val hex = fingerprint.filter { it != '-' }
 
@@ -343,6 +343,23 @@ class CryptoPrimitivesTest {
 
         return null
     }
+
+    /**
+     * The pairing code depends on every input, and is the digest's first four bytes big-endian.
+     *
+     * Separate from [thePairingCodeIsSixDigits] because these are two different claims: that one
+     * checks the range and the padding, this one checks the derivation. They were written as one
+     * function and the second half was left outside it when the body was split, which is why this
+     * function's first line used to be a comment: the compiler could not see the orphan until the
+     * module was built for the first time.
+     */
+    @Test
+    fun thePairingCodeDependsOnEveryInput() {
+        val secret = Derivations.testKey("pairing-secret")
+        val controllerNonce = ByteArray(32) { it.toByte() }
+        val agentNonce = ByteArray(32) { (it + 32).toByte() }
+
+        val code = Derivations.pairingCode(secret, controllerNonce, agentNonce)
 
         // The code depends on all three inputs, so a peer cannot make it match by holding one
         // of them fixed.

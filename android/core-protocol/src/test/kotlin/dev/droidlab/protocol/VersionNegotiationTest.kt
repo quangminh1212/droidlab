@@ -82,7 +82,12 @@ class VersionNegotiationTest {
      */
     @Test
     fun everyPairVectorNegotiatesItsDeclaredVersion() {
-        assertTrue(pairVectors().size >= 7, "expected at least 7 pair vectors")
+        // Six, and the number is asserted rather than assumed: the file carries eleven vectors
+        // and only six of them are list-against-list. A count that is merely "at least some"
+        // passes while a property change silently drops vectors out of the set, which is the
+        // failure this guards. The first version of this check said seven, which no arrangement
+        // of the file satisfies, and it was only found when the module was first compiled.
+        assertTrue(pairVectors().size >= 6, "expected at least 6 pair vectors")
 
         for (v in pairVectors()) {
             val id = v["id"]!!.asString()
@@ -100,7 +105,7 @@ class VersionNegotiationTest {
 
                 assertEquals(
                     declaredError.asString(),
-                    negotiated.error?.name,
+                    negotiated.error?.wireName,
                     "$id error code",
                 )
 

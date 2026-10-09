@@ -1,5 +1,7 @@
 package dev.droidlab.protocol
 
+import java.util.SortedSet
+
 /**
  * Capability and limit negotiation (RFC-0001 section 7).
  *

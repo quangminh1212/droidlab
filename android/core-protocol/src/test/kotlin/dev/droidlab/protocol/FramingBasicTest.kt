@@ -126,7 +126,7 @@ class FramingBasicTest {
                 body = frame.body,
                 channelId = frame.channelId,
                 sequenceNumber = frame.sequenceNumber,
-                flags = frame.flags,
+                flags = frame.header.flags,
                 acknowledgment = frame.header.acknowledgment,
             )) {
                 is FrameHeaderCodec.EncodeResult.Failure ->

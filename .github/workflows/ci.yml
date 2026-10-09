@@ -3,15 +3,22 @@ name: CI
 # Two jobs, because the three implementations are in three different states and pretending
 # otherwise would let a red build look green.
 #
-#   rust    The reference core. Compiles and tests here, so a failure is a real failure.
-#   windows The C# codec and its 583-test suite.
+#   rust     The reference core. Compiles and tests here, so a failure is a real failure.
+#   windows  The C# codec and its 583-test suite.
+#   kotlin   The Kotlin protocol core, compiled and tested. Added once the module was first
+#            built by hand and found to carry 1111 compile errors and 10 failing tests it had
+#            never reported. See docs/findings/kotlin-never-compiled.md.
 #   protocol The language-independent gates: the registry, the vectors, the generated files, the
 #            README's own numbers, and the Kotlin mirror.
 #
-# The Kotlin crate is NOT built: this environment has no Android SDK or Gradle, and a job that
-# cannot run must be absent rather than present-and-skipped. A skipped job reports success, which
-# is the failure mode ADR-0007 and the README exist to avoid. The Kotlin's arithmetic is checked
-# by the mirror in the `protocol` job, which says so in its own output.
+# The Kotlin crate needs only a JDK and the checked-in wrapper -- no Android SDK -- because
+# android/core-protocol is a plain Kotlin/JVM module with no Android dependency, which its own
+# build file states. That is why this job can exist where "no Android SDK" was the reason given
+# for not having one.
+#
+# Both Kotlin checks run and neither replaces the other. The build job proves the code exists,
+# compiles and behaves; the mirror in the `protocol` job proves the arithmetic still matches
+# the vectors, and it keeps working when the module does not compile.
 
 on:
   push:
@@ -81,6 +88,46 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
+
+  kotlin:
+    name: Kotlin protocol core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Cache the Gradle home
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('android/**/*.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      # The wrapper is checked in, so CI runs the same Gradle the repository pins. A gate that
+      # resolves its own toolchain from the network is a gate that changes under the code.
+      - name: Compile, warnings as errors
+        run: ./gradlew :core-protocol:compileKotlin :core-protocol:compileTestKotlin --no-daemon --console=plain
+
+      # The tests read protocol/vectors/ through the `droidlab.vectors` system property the
+      # build sets, so this is the Kotlin checked against the same files the other two read.
+      - name: Test
+        run: ./gradlew :core-protocol:test --no-daemon --console=plain
+
+      - name: Publish the test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotlin-test-results
+          path: android/core-protocol/build/reports/tests/test
 
   protocol:
     name: Protocol gates

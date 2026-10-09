@@ -266,6 +266,29 @@ class SessionReplayer(private val role: SessionRole) {
         state = SessionState.CLOSED
     }
 
+    /**
+     * Places this side in a state with a chosen outgoing high-water mark, for a test that has to
+     * reach a guard the ordinary call sequence cannot reach.
+     *
+     * A test that must drive "a sequence number that does not advance" has to *be* in a state
+     * where that is the interesting thing, and there is no frame sequence that gets there: the
+     * guards that matter most are the ones an ordinary transcript never triggers. The alternative
+     * -- widening `private set` to a public setter -- would let product code corrupt the counter,
+     * which is worse than one deliberately named seam.
+     *
+     * It is a function rather than a property setter so a caller cannot mistake it for ordinary
+     * use, and named so that a search for it finds every place a test bypasses the state machine.
+     *
+     * @param state the state to assume.
+     * @param lastSent the outgoing high-water mark, or null for none.
+     * @param lastReceived the incoming high-water mark, or null for none.
+     */
+    fun seedForTest(state: SessionState? = null, lastSent: Long? = null, lastReceived: Long? = null) {
+        if (state != null) this.state = state
+        if (lastSent != null) this.lastSent = lastSent
+        if (lastReceived != null) this.lastReceived = lastReceived
+    }
+
     private companion object {
         /** The reorder window, matching the frame classifier's. */
         const val REORDER_WINDOW = 32L

@@ -198,6 +198,11 @@ class DiscoveryTest {
         val minimalBytes = DiscoveryAdvertisement.canonicalTxt(fields(minimal))
         val fullBytes = DiscoveryAdvertisement.canonicalTxt(fields(full))
 
+        // The canonical byte strings rendered once, because the key-order checks below are about
+        // the text of the record and reading it repeatedly would only repeat the conversion.
+        val minimalText = minimalBytes.toString(Charsets.UTF_8)
+        val fullText = fullBytes.toString(Charsets.UTF_8)
+
         // The file says 87, measured rather than estimated, and the note is worth checking
         // because it is the sort of figure that goes stale when a key is added.
         assertEquals(
@@ -231,8 +236,7 @@ class DiscoveryTest {
             "the required keys are in the fixed order",
         )
 
-        // The extra keys appear in the declared order, not alphabetically.
-        val fullText = fullBytes.toString(Charsets.UTF_8)
+        // The optional keys appear in the declared order, not alphabetically.
         val positions = DiscoveryAdvertisement.OPTIONAL_KEYS.map { fullText.indexOf("\n$it=") }
 
         for (position in positions) {
@@ -364,7 +368,7 @@ class DiscoveryTest {
                         key,
                         when (value) {
                             is JsonValue.Str -> value.asString()
-                            is JsonValue.Num -> if (value.integral) value.asLong() else value.asString().toDouble()
+                            is JsonValue.Num -> if (value.integral != null) value.asLong() else value.asString().toDouble()
                             else -> throw AssertionError("the beacon field \"$key\" is neither a string nor a number")
                         },
                     )
@@ -512,7 +516,7 @@ class DiscoveryTest {
         assertEquals("list_as_incompatible", version["expected"]!!.asString(), "it is listed as incompatible")
         assertEquals(
             "ERR_VERSION_MISMATCH",
-            version["expected_error"]!!.asString(),
+            version["expected_error"]!!.asStringOrNull(),
             "the fault is a version mismatch",
         )
 

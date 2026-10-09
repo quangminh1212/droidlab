@@ -145,7 +145,7 @@ object FrameHeaderCodec {
     fun encode(header: FrameHeader): EncodeResult {
         val failure = validate(header)
         if (failure != null) {
-            return EncodeResult.Failure(failure)
+            return EncodeResult.Failure(failure.first, failure.second)
         }
 
         val out = ByteArray(FrameHeader.HEADER_LENGTH)
