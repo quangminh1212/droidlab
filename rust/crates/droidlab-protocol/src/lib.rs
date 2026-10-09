@@ -63,6 +63,7 @@
 pub mod capability;
 pub mod cbor;
 pub mod classify;
+pub mod discovery;
 pub mod error;
 pub mod frame_header;
 pub mod keyschedule;
@@ -85,6 +86,13 @@ pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
 pub use classify::{
     classify, classify_in_state, classify_with_message_type, is_repeat_of_a_passed_state,
     may_be_cleartext, Classification, HandshakeState, Verdict,
+};
+pub use discovery::{
+    advertises_when_busy, build_txt, canonical_beacon, canonical_beacon_string,
+    canonical_key_order, canonical_txt, canonical_txt_string, evaluate_advertisement, goodbye_ttl,
+    is_expired, is_known_txt_key, is_usable_port, may_emit_beacon, requires_reregistration,
+    truncate_capabilities, AdvertisementVerdict, Presence, TxtError, TxtFields, BEACON_PORT,
+    DEFAULT_PORT, DOMAIN, MAX_TXT_BYTES, OPTIONAL_KEYS, REQUIRED_KEYS, SERVICE_TYPE, TTL_SECONDS,
 };
 pub use error::{ErrorCode, FrameError, Severity};
 pub use frame_header::{
