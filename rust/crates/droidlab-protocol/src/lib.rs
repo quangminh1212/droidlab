@@ -61,17 +61,24 @@
 #![deny(clippy::indexing_slicing)]
 
 pub mod cbor;
+pub mod classify;
 pub mod error;
 pub mod frame_header;
 pub mod keyschedule;
 pub mod labels;
 pub mod limits;
 pub mod pairing;
+pub mod registry;
+pub mod schema;
 pub mod seed;
 pub mod transcript;
 pub mod wire;
 
 pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
+pub use classify::{
+    classify, classify_in_state, classify_with_message_type, is_repeat_of_a_passed_state,
+    may_be_cleartext, Classification, HandshakeState, Verdict,
+};
 pub use error::{ErrorCode, FrameError, Severity};
 pub use frame_header::{
     FrameFlag, FrameHeader, DEFINED_FLAGS, FIXED_LENGTH, MAGIC, PROTOCOL_VERSION, RESERVED_FLAGS,
@@ -88,6 +95,16 @@ pub use pairing::{
     sign_ed25519_with_seed, verify_ed25519, verify_proof, x25519_shared, AuthProofs, Fingerprint,
     FingerprintError, PairingError, PairingSecret, FINGERPRINT_BYTES, FINGERPRINT_RENDERED,
     PAIRING_CODE_DIGITS, PAIRING_CODE_MODULUS, PAIRING_SECRET_LENGTH, PROOF_LENGTH,
+};
+pub use registry::Direction as MessageDirection;
+pub use registry::{
+    all_codes, all_names, is_registered_message_type, is_registered_name, may_be_unencrypted,
+    message_type, message_type_by_name, must_be_encrypted, ChannelScope, MessageType,
+    MESSAGE_TYPES,
+};
+pub use schema::{
+    check_capability, check_channel, check_channel_limit, validate_body, validate_raw_body,
+    BodySchema, FieldSpec, FieldType, SemanticCheck, ValidationError, SCHEMAS,
 };
 pub use seed::{
     from_base64url, from_hex, key_from_hex, key_from_seed, seed_hex, to_base64url, to_hex,
