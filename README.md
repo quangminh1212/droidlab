@@ -388,8 +388,37 @@ A generated file that is committed and never checked is worse than a hand-writte
 it looks authoritative and cannot be edited, so when it drifts from its source nobody
 notices and readers trust the stale copy.
 
-**4. README consistency check** — reads the numbers out of this file and fails if they
-no longer match the run (42 checks):
+**4. Kotlin conformance mirror** — the Android protocol core cannot be compiled here, so
+its arithmetic is reimplemented in JavaScript within the gate and run against the same
+vector files. This is evidence for the Kotlin's *logic* and never for its compilation:
+
+```text
+ok    561 Kotlin-mirrored checks hold against the real vectors
+ok    framing decode, prefix arithmetic, round-trip, AAD and reserved flags
+ok    cbOR shortest-encoding boundaries and the canonical empty body
+ok    all 22 malformed vectors and all 3 sequence vectors classify as declared
+
+NOTE  This validates the Kotlin logic, NOT that the Kotlin compiles.
+```
+
+**5. Mutation check** — breaks the mirrored logic on purpose, one rule at a time, and
+fails if the gate does not notice. A check that cannot fail is worse than no check,
+because it reports coverage of a rule nothing is testing:
+
+```text
+ok    baseline passes with 561 checks
+ok    24 mutations declared
+ok    all 24 mutations caught
+ok    the gate passes again after restoring
+```
+
+This step exists because it has already found real holes. A video-clamp guard was inert
+for every vector input, and three crypto checks could not fail — the pairing code's byte
+order, its zero padding, and the replay window's null high-water mark. Each of them
+*looked* covered until a mutation survived.
+
+**6. README consistency check** — reads the numbers out of this file and fails if they
+no longer match the run (43 checks):
 
 ```text
 ok    checks passed = 84 (README and the run agree)
@@ -397,7 +426,7 @@ ok    checks failed = 0 (README and the run agree)
 ok    warnings = 0 (README and the run agree)
 ok    error codes = 22 (registry and README agree)
 
-All 42 README checks passed.
+All 43 README checks passed.
 ```
 
 ### What is verified, and what is not

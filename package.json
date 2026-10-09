@@ -17,8 +17,9 @@
     "check:readme": "node protocol/tools/check-readme.cjs",
     "check:generated": "node protocol/tools/check-generated.cjs",
     "check:kotlin": "node protocol/tools/check-kotlin-vectors.cjs",
+    "check:mutation": "node protocol/tools/mutation-check.cjs",
     "test:protocol": "node protocol/tools/test-vectors/verify.mjs",
-    "check": "npm run check:registry && npm run check:generated && npm run check:kotlin && npm run test:protocol && npm run check:readme"
+    "check": "npm run check:registry && npm run check:generated && npm run check:kotlin && npm run check:mutation && npm run test:protocol && npm run check:readme"
   },
   "config": {
     "commitizen": {
