@@ -1,0 +1,119 @@
+name: CI
+
+# Two jobs, because the three implementations are in three different states and pretending
+# otherwise would let a red build look green.
+#
+#   rust    The reference core. Compiles and tests here, so a failure is a real failure.
+#   windows The C# codec and its 583-test suite.
+#   protocol The language-independent gates: the registry, the vectors, the generated files, the
+#            README's own numbers, and the Kotlin mirror.
+#
+# The Kotlin crate is NOT built: this environment has no Android SDK or Gradle, and a job that
+# cannot run must be absent rather than present-and-skipped. A skipped job reports success, which
+# is the failure mode ADR-0007 and the README exist to avoid. The Kotlin's arithmetic is checked
+# by the mirror in the `protocol` job, which says so in its own output.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # A warning is a defect in this repository, in every language.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: Rust reference core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache the build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/**/Cargo.toml', 'rust/Cargo.lock') }}
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy, warnings as errors
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Conformance vectors
+        run: cargo test --all-features --verbose
+
+      - name: Documentation builds
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  windows:
+    name: Windows codec
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build, warnings as errors
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --logger "console;verbosity=normal"
+
+  protocol:
+    name: Protocol gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - run: npm ci
+
+      # The registry, the vectors, the generated files, the Kotlin mirror, the mutation check and
+      # the README's own numbers. One command, so a contributor and CI cannot disagree about what
+      # "green" means.
+      - name: Every gate
+        run: npm run check
+
+  markdown:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - run: npx markdownlint-cli2 "**/*.md"

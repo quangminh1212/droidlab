@@ -1,0 +1,38 @@
+[package]
+name = "droidlab-protocol"
+description = "DLWP/1 wire protocol: framing, cbOR bodies, session crypto, shell policy."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The protocol core is usable from an embedded or a no_std-ish context and has no business
+# pulling in a runtime, so every dependency is `default-features = false` and the feature set is
+# named explicitly in the workspace manifest.
+[dependencies]
+aes-gcm.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+x25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+hex.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+# The panic-hunting lints live in `src/lib.rs` as inner attributes rather than here, because the
+# `[lints]` table applies to every target in the package -- including the conformance tests, where
+# `expect` and `panic!` are exactly how an assertion is supposed to report a failure. Denying them
+# there would make each failure message worse for no safety gained. Only the overflow lint is
+# crate-wide, because an unchecked sum is a defect in a test's own arithmetic too.
+[lints.clippy]
+arithmetic_side_effects = "warn"

@@ -1,0 +1,9 @@
+# Pinned so that a build here and a build on a contributor's machine use the same compiler. The
+# MSRV in the workspace manifest is what the code needs; this file is what CI uses, and keeping
+# them separate means the MSRV can be checked deliberately rather than discovered by breaking
+# somebody's build.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+targets = []
+profile = "minimal"
