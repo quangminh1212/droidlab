@@ -68,6 +68,58 @@ object Vectors {
     }
 
     /**
+     * The parsed normative registry, `protocol/registry/dlwp-1.json`.
+     *
+     * Read from the vector root's sibling rather than through [load], because the registry is
+     * not a vector: it is the normative document the vectors are checked against, and a test
+     * that compared the vectors to the registry would be comparing a thing to itself. Reading
+     * it here lets a test check the CODE against the normative source, which is the direction
+     * that catches a transcription error.
+     *
+     * @return the parsed registry.
+     */
+    fun registry(): JsonValue {
+        val file = File(root.parentFile, "registry/dlwp-1.json")
+
+        if (!file.isFile) {
+            error("the registry is missing from ${file.absolutePath}")
+        }
+
+        return JsonParser(file.readText(Charsets.UTF_8)).parse()
+    }
+
+    /**
+     * The registry's message types, keyed by name.
+     *
+     * The registry stores them as an object whose keys are a 0-based enumeration order while
+     * each entry's `code` field is the 1-based wire value. This returns the wire values, because
+     * that is what a header carries -- and returning the keys instead is the mistake the check
+     * that uses this exists to catch.
+     *
+     * @return the wire code of each message type, by name.
+     */
+    fun registryMessageCodes(): Map<String, Int> =
+        buildMap {
+            for ((_, definition) in registry()["message_types"]!!.asObject()) {
+                put(definition.require("name").asString(), definition.require("code").asInt())
+            }
+        }
+
+    /**
+     * The registry's message names that may travel unencrypted.
+     *
+     * @return the names.
+     */
+    fun registryUnencryptedMessages(): Set<String> =
+        buildSet {
+            for ((_, definition) in registry()["message_types"]!!.asObject()) {
+                if (!definition.require("encrypted").asBoolean()) {
+                    add(definition.require("name").asString())
+                }
+            }
+        }
+
+    /**
      * Decodes base64, rejecting anything the alphabet does not contain.
      *
      * @param text the base64 text.

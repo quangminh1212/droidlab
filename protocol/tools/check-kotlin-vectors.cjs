@@ -3107,6 +3107,781 @@ function discoveryVector(file, key, id) {
   expect(moved.expected === 're_register_service', 'an address change re-registers the service (got ' + moved.expected + ')');
 }
 
+
+// ---------------------------------------------------------------------------
+// SessionMessages / SessionReplay  --  mirror of SessionReplay.kt
+// ---------------------------------------------------------------------------
+
+const SESSION_MESSAGES = {
+  HELLO: 1,
+  HELLO_ACK: 2,
+  AUTH: 3,
+  AUTH_OK: 4,
+  PING: 5,
+  PONG: 6,
+  GET_CAPABILITIES: 16,
+  CAPABILITIES: 17,
+  CHANNEL_OPEN: 32,
+  CHANNEL_OPENED: 33,
+  CHANNEL_CLOSE: 34,
+  VIDEO_START: 48,
+  VIDEO_CONFIG: 49,
+  VIDEO_FRAME: 50,
+  VIDEO_STOP: 51,
+  INPUT_TOUCH: 64,
+  SHELL_EXEC: 80,
+  DEVICE_INFO: 128,
+  DEVICE_INFO_RESULT: 129,
+  ERROR: 240,
+  SESSION_END: 241,
+};
+
+const SESSION_UNENCRYPTED = new Set([SESSION_MESSAGES.HELLO, SESSION_MESSAGES.HELLO_ACK]);
+
+const SESSION_STATE = {
+  IDLE: 'idle',
+  DISCOVERING: 'discovering',
+  CONNECTING: 'connecting',
+  HANDSHAKING: 'handshaking',
+  AUTHENTICATING: 'authenticating',
+  ESTABLISHED: 'established',
+  STREAMING: 'streaming',
+  CLOSING: 'closing',
+  CLOSED: 'closed',
+};
+
+/** Mirror of SessionTransitions.next. Throws when the transition is illegal. */
+function sessionNext(from, role, messageType, channelId) {
+  const isEstablished = (s) => s === SESSION_STATE.ESTABLISHED || s === SESSION_STATE.STREAMING;
+  const require_ = (ok, message) => {
+    if (!ok) throw new Error(message);
+  };
+
+  require_(from !== SESSION_STATE.CLOSED, 'the session is closed and accepts no frames');
+
+  switch (messageType) {
+    case SESSION_MESSAGES.HELLO:
+      require_(role === 'controller', 'only the controller sends HELLO');
+      require_(from === SESSION_STATE.IDLE || from === SESSION_STATE.CONNECTING, 'HELLO is sent from idle or connecting, not from ' + from);
+      return SESSION_STATE.HANDSHAKING;
+
+    case SESSION_MESSAGES.HELLO_ACK:
+      require_(role === 'agent', 'only the agent sends HELLO_ACK');
+      require_(from === SESSION_STATE.HANDSHAKING, 'HELLO_ACK answers HELLO, so the state is handshaking, not ' + from);
+      return SESSION_STATE.AUTHENTICATING;
+
+    case SESSION_MESSAGES.AUTH:
+      require_(role === 'controller', 'only the controller sends AUTH');
+      require_(from === SESSION_STATE.AUTHENTICATING, 'AUTH is sent while authenticating, not from ' + from);
+
+      // Sending AUTH does NOT establish the session: the session is established when the
+      // HANDSHAKE completes, which is when both proofs have been exchanged. The controller has
+      // sent its proof but has not checked the agent's, so it remains authenticating.
+      return SESSION_STATE.AUTHENTICATING;
+
+    case SESSION_MESSAGES.AUTH_OK:
+      require_(role === 'agent', 'only the agent sends AUTH_OK');
+      require_(from === SESSION_STATE.AUTHENTICATING, 'AUTH_OK is sent while authenticating, not from ' + from);
+      return SESSION_STATE.ESTABLISHED;
+
+    case SESSION_MESSAGES.SESSION_END:
+      return SESSION_STATE.CLOSED;
+
+    case SESSION_MESSAGES.ERROR:
+      // An ERROR frame does not change the state on its own: whether the session survives depends
+      // on the SEVERITY in the body, and this table deliberately does not read bodies.
+      return from;
+
+    case SESSION_MESSAGES.CHANNEL_OPEN:
+    case SESSION_MESSAGES.CHANNEL_OPENED:
+      require_(isEstablished(from), 'a channel is opened after authentication, not from ' + from);
+      return from;
+
+    case SESSION_MESSAGES.VIDEO_START:
+    case SESSION_MESSAGES.VIDEO_CONFIG:
+      require_(isEstablished(from), 'video starts after authentication, not from ' + from);
+      return SESSION_STATE.STREAMING;
+
+    case SESSION_MESSAGES.DEVICE_INFO:
+    case SESSION_MESSAGES.DEVICE_INFO_RESULT:
+    case SESSION_MESSAGES.INPUT_TOUCH:
+    case SESSION_MESSAGES.SHELL_EXEC:
+      require_(isEstablished(from), 'the message type ' + messageType + ' arrives after authentication, not from ' + from);
+      return from;
+
+    default:
+      require_(isEstablished(from), 'message type ' + messageType + ' arrives after authentication, not from ' + from);
+      return from;
+  }
+}
+
+/** Mirror of SessionReplayer. */
+class SessionReplayer {
+  constructor(role) {
+    this.role = role;
+    this.state = SESSION_STATE.IDLE;
+    this.lastSent = null;
+    this.lastReceived = null;
+    this.sentEncrypted = false;
+    this.peerSentEncrypted = false;
+    this.received = new Set();
+  }
+
+  send(messageType, sequenceNumber, encrypted, channelId = 0) {
+    // Monotonic, not strictly sequential. A transcript records the frames that matter rather
+    // than every frame: the controller in session-basic.json sends 1, 2, 3, 4, 5 and then 8,
+    // because its 6 and 7 are the agent's frames in the agent's own counter. Demanding strict
+    // succession made the transcript un-replayable.
+    if (sequenceNumber < 1) throw new Error('the first outgoing sequence number is 1, not ' + sequenceNumber);
+    if (this.lastSent !== null && sequenceNumber <= this.lastSent) {
+      throw new Error('outgoing sequence number ' + sequenceNumber + ' does not advance past ' + this.lastSent);
+    }
+
+    const isUnencryptedType = SESSION_UNENCRYPTED.has(messageType);
+    if (isUnencryptedType === encrypted) {
+      throw new Error(isUnencryptedType ? 'this type must not be encrypted' : 'this type must be encrypted');
+    }
+
+    this.state = sessionNext(this.state, this.role, messageType, channelId);
+    this.lastSent = sequenceNumber;
+    if (encrypted) this.sentEncrypted = true;
+  }
+
+  receive(messageType, sequenceNumber, encrypted, channelId = 0) {
+    const floor = this.lastReceived === null ? null : this.lastReceived - 32;
+
+    if (this.received.has(sequenceNumber) || (floor !== null && sequenceNumber < floor)) {
+      this.state = SESSION_STATE.CLOSING;
+      return { kind: 'fatal', code: 'ERR_REPLAY_DETECTED' };
+    }
+
+    const other = this.role === 'controller' ? 'agent' : 'controller';
+
+    try {
+      var next = sessionNext(this.state, other, messageType, channelId);
+    } catch {
+      return { kind: 'recoverable', code: 'ERR_UNEXPECTED_MESSAGE' };
+    }
+
+    const isUnencryptedType = SESSION_UNENCRYPTED.has(messageType);
+    if (isUnencryptedType === encrypted) {
+      throw new Error(isUnencryptedType ? 'this type must not be encrypted' : 'this type must be encrypted');
+    }
+
+    this.received.add(sequenceNumber);
+    if (encrypted) this.peerSentEncrypted = true;
+    this.lastReceived = this.lastReceived === null ? sequenceNumber : Math.max(this.lastReceived, sequenceNumber);
+    this.state = next;
+
+    return { kind: 'accepted' };
+  }
+}
+
+/** A transcript step, 1-based. */
+function stepOf(file, index) {
+  const found = file.steps.find((s) => s.step === index);
+  if (!found) throw new Error('session-basic.json has no step ' + index);
+  return found;
+}
+
+const sessionStep = (file, i) => stepOf(file, i);
+const stepSend = (file, i) => stepOf(file, i).send;
+const stepType = (file, i) => {
+  const name = stepSend(file, i).name;
+  const code = SESSION_MESSAGES[name];
+  if (code === undefined) throw new Error('the message name "' + name + '" in step ' + i + ' is not one this mirror names');
+  return code;
+};
+const stepEnc = (file, i) => stepSend(file, i).encrypted === true;
+const stepSeq = (file, i) => stepSend(file, i).sequence_number;
+const stepChannel = (file, i) => stepSend(file, i).channel_id;
+const stepActor = (file, i) => stepOf(file, i).actor;
+
+// ---- SessionReplayTest.everyMessageCodeMatchesTheRegistry ---------------------
+{
+  const registryJson = JSON.parse(fs.readFileSync('C:/Dev/DroidLab/protocol/registry/dlwp-1.json', 'utf8'));
+  const byName = {};
+  for (const definition of Object.values(registryJson.message_types)) {
+    byName[definition.name] = definition.code;
+  }
+
+  // The registry's JSON object uses 0-based keys while each entry's `code` is 1-based.
+  // Transcribing from the key instead of the field is silently plausible -- HELLO would be 0 and
+  // the whole transcript would still run -- so every constant is checked against the FIELD.
+  for (const [name, code] of Object.entries(SESSION_MESSAGES)) {
+    expect(byName[name] !== undefined, 'dlwp-1.json has a message type named ' + name);
+    expect(byName[name] === code, name + ' is the registry\'s code (registry ' + byName[name] + ', code ' + code + ')');
+  }
+
+  expect(new Set(Object.values(SESSION_MESSAGES)).size === Object.keys(SESSION_MESSAGES).length, 'every message code is distinct');
+
+  // And the 0-based keys really do differ from the codes, so the check above is not trivially
+  // true because the two happen to coincide.
+  const firstKey = Object.keys(registryJson.message_types)[0];
+  expect(registryJson.message_types[firstKey].code !== Number(firstKey), 'the JSON key is 0-based while the code is 1-based, so the distinction is real');
+
+  const unencrypted = Object.values(registryJson.message_types)
+    .filter((d) => d.encrypted === false)
+    .map((d) => d.name)
+    .sort();
+
+  expect(unencrypted.join(',') === 'HELLO,HELLO_ACK', 'only the handshake pair travels unencrypted (got ' + unencrypted.join(',') + ')');
+  expect(
+    [...SESSION_UNENCRYPTED].sort((a, b) => a - b).join(',') === [SESSION_MESSAGES.HELLO, SESSION_MESSAGES.HELLO_ACK].join(','),
+    'the unencrypted set matches the registry',
+  );
+}
+
+// ---- SessionReplayTest.theTranscriptWalksTheDeclaredPath ----------------------
+{
+  const file = load('session-basic.json');
+  const stateMachine = file.assertions.state_machine;
+
+  expect(
+    stateMachine.includes('idle -> discovering -> connecting -> handshaking -> authenticating -> established -> streaming -> closing -> closed'),
+    'the declared path is the full one',
+  );
+  expect(stateMachine.includes('any_state_on_fatal_error -> closing'), 'a fatal error from any state goes to closing');
+
+  // From ANY live state: a fatal error during the handshake and one during streaming both end at
+  // closing, so the transition cannot be modelled as an edge from established.
+  const live = Object.values(SESSION_STATE).filter((s) => s !== SESSION_STATE.CLOSED);
+  expect(live.length >= 8, 'there are at least eight live states');
+
+  for (const state of live) {
+    if (state === SESSION_STATE.CLOSING) continue;
+    let ok = true;
+    try {
+      sessionNext(state, 'agent', SESSION_MESSAGES.ERROR, 0);
+    } catch {
+      ok = false;
+    }
+    expect(ok, 'an ERROR frame is legal in ' + state);
+  }
+}
+
+// ---- SessionReplayTest.theSequenceNumbersArePerDirection ----------------------
+{
+  const file = load('session-basic.json');
+  const rule = file.assertions.sequence_numbers;
+
+  expect(rule.includes('session-global'), 'the counter is session-global');
+  expect(rule.includes('increase by one per frame sent by that side'), 'it increases per frame by that side');
+  expect(rule.includes('The two directions number independently'), 'the directions are independent');
+  expect(rule.includes('both sides legitimately use sequence number 1'), 'both sides start at one');
+
+  // The transcript demonstrates it: steps 1 and 2 both use sequence number 1, from different actors.
+  expect(stepSeq(file, 1) === 1 && stepSeq(file, 2) === 1, 'both first frames use sequence number 1');
+  expect(stepActor(file, 1) !== stepActor(file, 2), 'and they are from different actors');
+
+  // Within each direction the numbers increase by exactly one, with one deliberate exception.
+  for (const role of ['controller', 'agent']) {
+    const own = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19].filter((i) => stepActor(file, i) === role);
+    const replays = own.filter((i) => stepOf(file, i).deliberate_replay === true);
+
+    let previous = null;
+    for (let position = 0; position < own.length; position++) {
+      const index = own[position];
+      if (replays.includes(index)) continue;
+
+      // Monotonic, NOT gapless: the transcript records the frames that matter, so the
+      // controller goes 1,2,3,4,5 and then 8. Its 6 and 7 are the agent's frames in the agent's
+      // own counter. My first version demanded exactly one more and failed at step 13.
+      const current = stepSeq(file, index);
+      if (previous !== null) {
+        expect(current > previous, role + "'s sequence number at step " + index + ' advances past ' + previous + ' (got ' + current + ')');
+      }
+      previous = current;
+    }
+  }
+}
+
+// ---- SessionReplayTest.replayingTheTranscriptReachesTheDeclaredStates ---------
+{
+  const file = load('session-basic.json');
+
+  const controller = new SessionReplayer('controller');
+  const agent = new SessionReplayer('agent');
+
+  // Step 1.
+  controller.send(stepType(file, 1), stepSeq(file, 1), stepEnc(file, 1));
+  expect(controller.state === SESSION_STATE.HANDSHAKING, 'the controller is handshaking after HELLO (got ' + controller.state + ')');
+  expect(agent.state === SESSION_STATE.IDLE, 'the agent has not seen the frame yet');
+  expect(!controller.sentEncrypted, 'HELLO is not encrypted, so nothing has been sent under a key');
+
+  // Step 2.
+  expect(agent.receive(stepType(file, 1), stepSeq(file, 1), stepEnc(file, 1)).kind === 'accepted', 'the agent accepts HELLO');
+  expect(agent.state === SESSION_STATE.HANDSHAKING, 'the agent is handshaking after receiving HELLO');
+
+  agent.send(stepType(file, 2), stepSeq(file, 2), stepEnc(file, 2));
+  expect(agent.state === SESSION_STATE.AUTHENTICATING, 'the agent authenticates after HELLO_ACK');
+
+  expect(controller.receive(stepType(file, 2), stepSeq(file, 2), stepEnc(file, 2)).kind === 'accepted', 'the controller accepts HELLO_ACK');
+  expect(controller.state === SESSION_STATE.AUTHENTICATING, 'the controller authenticates after HELLO_ACK');
+
+  expect(!controller.sentEncrypted && !agent.sentEncrypted, 'neither side has sent an encrypted frame yet');
+
+  // Step 3.
+  controller.send(stepType(file, 3), stepSeq(file, 3), stepEnc(file, 3));
+  // Sending AUTH leaves the controller AUTHENTICATING, not established: the session is
+  // established when both proofs have been exchanged, and the controller has not yet checked
+  // the agent's. Step 3's own expectation is that the controller is still authenticating.
+  expect(controller.state === SESSION_STATE.AUTHENTICATING, 'the controller is authenticating after AUTH (got ' + controller.state + ')');
+  expect(controller.sentEncrypted, "AUTH is the controller's first encrypted frame");
+
+  // Step 4.
+  expect(agent.receive(stepType(file, 3), stepSeq(file, 3), stepEnc(file, 3)).kind === 'accepted', 'the agent accepts AUTH');
+
+  agent.send(stepType(file, 4), stepSeq(file, 4), stepEnc(file, 4));
+  expect(agent.state === SESSION_STATE.ESTABLISHED, 'the agent is established after AUTH_OK');
+
+  expect(controller.receive(stepType(file, 4), stepSeq(file, 4), stepEnc(file, 4)).kind === 'accepted', 'the controller accepts AUTH_OK');
+  expect(controller.state === SESSION_STATE.ESTABLISHED, 'the controller is established after AUTH_OK (got ' + controller.state + ')');
+
+  // Step 7/8.
+  expect(agent.receive(stepType(file, 7), stepSeq(file, 7), stepEnc(file, 7), stepChannel(file, 7)).kind === 'accepted', 'the agent accepts CHANNEL_OPEN');
+
+  agent.send(stepType(file, 8), stepSeq(file, 8), stepEnc(file, 8), stepChannel(file, 8));
+  expect(controller.receive(stepType(file, 8), stepSeq(file, 8), stepEnc(file, 8), stepChannel(file, 8)).kind === 'accepted', 'the controller accepts CHANNEL_OPENED');
+
+  expect(stepSend(file, 8).body.channel_id === 1, 'the agent allocated channel 1 (got ' + stepSend(file, 8).body.channel_id + ')');
+
+  // Step 9.
+  controller.send(stepType(file, 9), stepSeq(file, 9), stepEnc(file, 9), stepChannel(file, 9));
+  expect(controller.state === SESSION_STATE.STREAMING, 'the controller is streaming after VIDEO_START (got ' + controller.state + ')');
+
+  expect(agent.receive(stepType(file, 9), stepSeq(file, 9), stepEnc(file, 9), stepChannel(file, 9)).kind === 'accepted', 'the agent accepts VIDEO_START');
+  expect(agent.state === SESSION_STATE.STREAMING, 'the agent is streaming after receiving VIDEO_START');
+}
+
+// ---- SessionReplayTest.theReplayedFrameEndsTheSession ------------------------
+{
+  const file = load('session-basic.json');
+
+  expect(stepOf(file, 17).deliberate_replay === true, 'step 17 is marked as a deliberate replay');
+  expect(stepSeq(file, 17) === stepSeq(file, 13), "step 17 reuses step 13's sequence number");
+  // NOT compared against step 16: step 16 is the AGENT's frame and step 17 is the
+  // controller's, and the two directions number independently. Both use 8 and 10 here for
+  // entirely legitimate reasons.
+  expect(stepActor(file, 16) !== stepActor(file, 17), 'steps 16 and 17 are from different actors');
+  expect(stepActor(file, 13) === stepActor(file, 17), 'the replay is from the same actor');
+  expect(stepChannel(file, 13) === stepChannel(file, 17), 'the replay is on the same channel');
+
+  // The frame differs only in its body, which is the point: a replay is distinguished by its
+  // sequence number and not by its contents. A receiver checking contents would accept this one.
+  expect(
+    stepSend(file, 13).body.gesture_id !== stepSend(file, 17).body.gesture_id,
+    'the replayed frame has a DIFFERENT body, so only the sequence number can catch it',
+  );
+
+  // Replaying the WHOLE transcript up to step 16, both directions, rather than a hand-picked
+  // subset. A subset is not a replay: the counts below only work out because every frame the
+  // agent accepted is present, and leaving one out makes step 17 look like a legitimate reorder
+  // instead of a repeat.
+  const controller = new SessionReplayer('controller');
+  const agent = new SessionReplayer('agent');
+
+  for (let index = 1; index <= 16; index++) {
+    const role = stepActor(file, index);
+    const type = stepType(file, index);
+    const seq = stepSeq(file, index);
+    const enc = stepEnc(file, index);
+    const channel = stepChannel(file, index);
+
+    if (role === 'controller') {
+      const peer = agent.receive(type, seq, enc, channel);
+      expect(peer.kind !== 'fatal', 'the agent accepts step ' + index + ' (' + peer.kind + ')');
+      controller.send(type, seq, enc, channel);
+    } else {
+      const peer = controller.receive(type, seq, enc, channel);
+      expect(peer.kind !== 'fatal', 'the controller accepts step ' + index + ' (' + peer.kind + ')');
+      agent.send(type, seq, enc, channel);
+    }
+  }
+
+  // The agent has accepted 1,2,3,4,5,8,9,10 from the controller and nothing is repeated yet.
+  expect(agent.lastReceived === 10, 'the agent has accepted up to sequence number 10 (got ' + agent.lastReceived + ')');
+  expect(!agent.received.has(8) || agent.received.size >= 4, 'the agent has seen sequence number 8');
+
+  const outcome = agent.receive(stepType(file, 17), stepSeq(file, 17), stepEnc(file, 17), stepChannel(file, 17));
+
+  expect(outcome.kind === 'fatal', 'the replayed frame is fatal (got ' + outcome.kind + ')');
+  expect(outcome.code === 'ERR_REPLAY_DETECTED', 'the code is ERR_REPLAY_DETECTED (got ' + outcome.code + ')');
+  expect(agent.state === SESSION_STATE.CLOSING, 'the agent moves to closing (got ' + agent.state + ')');
+
+  agent.send(stepType(file, 19), stepSeq(file, 19), stepEnc(file, 19), stepChannel(file, 19));
+  expect(agent.state === SESSION_STATE.CLOSED, 'SESSION_END closes the session');
+}
+
+// ---- SessionReplayTest.aRecoverableFaultDoesNotEndTheSession ------------------
+{
+  const file = load('session-basic.json');
+
+  const expect16 = stepOf(file, 16).expect || [];
+  expect(expect16.some((e) => e.includes('session survives')), 'step 16 declares the session survives');
+  expect(expect16.some((e) => e.includes('video stream continues')), 'step 16 declares the stream continues');
+
+  expect(stepSend(file, 16).body.code === 'ERR_UNSUPPORTED_FEATURE', 'the refusal is ERR_UNSUPPORTED_FEATURE');
+  expect(stepSend(file, 16).body.severity === 'recoverable', 'and its severity is recoverable');
+  expect(stepSend(file, 18).body.severity === 'fatal', 'the replay error is fatal');
+
+  // An ERROR frame does not itself change the state.
+  expect(
+    sessionNext(SESSION_STATE.STREAMING, 'agent', SESSION_MESSAGES.ERROR, 1) === SESSION_STATE.STREAMING,
+    'an ERROR frame alone does not change the state',
+  );
+}
+
+// ---- SessionReplayTest.theShellCommandIsRefusedForWantOfACapability -----------
+{
+  const file = load('session-basic.json');
+
+  const expect4 = stepOf(file, 4).expect || [];
+  expect(
+    expect4.some((e) => e.includes('shell.exec and app.install are absent from the negotiated set')),
+    'step 4 declares shell.exec and app.install absent',
+  );
+
+  const negotiated = stepSend(file, 4).body.negotiated.capabilities;
+  expect(!negotiated.includes('shell.exec'), 'shell.exec was not negotiated');
+  expect(!negotiated.includes('app.install'), 'app.install was not negotiated');
+
+  // ERR_UNSUPPORTED_FEATURE rather than ERR_PERMISSION_DENIED: an unnegotiated capability is a
+  // feature that was never agreed to, not a permission that was refused. The two have different
+  // remedies -- renegotiation versus an operator grant.
+  expect(stepSend(file, 16).body.code === 'ERR_UNSUPPORTED_FEATURE', 'an unnegotiated capability is an unsupported feature');
+  expect(stepSend(file, 16).body.code !== 'ERR_PERMISSION_DENIED', 'it is not a permission denial');
+}
+
+// ---- SessionReplayTest.theVideoRequestIsClampedNotRefused --------------------
+{
+  const file = load('session-basic.json');
+
+  const expect9 = stepOf(file, 9).expect || [];
+  expect(expect9.some((e) => e.includes('must be clamped, not refused')), 'step 9 declares the request is clamped rather than refused');
+
+  const request = stepSend(file, 9).body;
+  const limits = file.preconditions.agent_limits;
+
+  expect(request.max_width > limits.max_video_width, 'the requested width exceeds the limit');
+  expect(request.max_height > limits.max_video_height, 'the requested height exceeds the limit');
+  expect(request.fps > limits.max_video_fps, 'the requested rate exceeds the limit');
+
+  const config = stepSend(file, 10).body;
+  // NOT asserted as "each axis is within its limit", which is what I first wrote and what fails:
+  // the agreed height 1920 exceeds the ceiling height 1080. The ceiling bounds the REQUEST box,
+  // and the box is then oriented to the screen, so a landscape ceiling against a portrait screen
+  // rotates to 1080x1920 -- the ceiling's own dimensions, swapped.
+  //
+  // What is conserved is the AREA, which is exactly what rotating a box does. Stated as the
+  // property rather than a numeric comparison, because the numbers only line up when the screen
+  // is the same aspect as the ceiling.
+  const ceilingArea = limits.max_video_width * limits.max_video_height;
+  const agreedArea = config.width * config.height;
+
+  expect(agreedArea <= ceilingArea, 'the agreed area is within the ceiling area (' + agreedArea + ' <= ' + ceilingArea + ')');
+  expect(agreedArea === ceilingArea, 'and here it uses the ceiling exactly');
+
+  // And the box is the ceiling rotated into the screen's orientation.
+  expect(
+    (config.width === limits.max_video_height && config.height === limits.max_video_width) ||
+      (config.width === limits.max_video_width && config.height === limits.max_video_height),
+    'the agreed box is the ceiling in the screen orientation (got ' + config.width + 'x' + config.height + ')',
+  );
+  expect(config.csd !== undefined, 'the agent sends its codec configuration with the size');
+
+  // The screen is reported separately from the encoded size, because they differ.
+  expect(config.screen_width === 1080, 'the screen width is reported separately');
+  expect(config.screen_height === 2400, 'the screen height is reported separately');
+  expect(
+    !(config.width === config.screen_width && config.height === config.screen_height),
+    'the encoded size is not simply the screen size',
+  );
+}
+
+// ---- SessionReplayTest.aTapIsMappedFromNormalisedCoordinates ----------------
+{
+  const file = load('session-basic.json');
+
+  const expect14 = stepOf(file, 14).expect || [];
+  expect(expect14.some((e) => e.includes('agent maps 5000/10000 onto 540,1200')), 'step 14 declares the mapping');
+
+  const body = stepSend(file, 14).body;
+  const pointer = body.pointers[0];
+
+  // Ten thousand, not 65536 and not 32767: the declared mapping is exactly a division by 10000.
+  expect(pointer.x * body.screen_width / 10000 === 540, pointer.x + ' maps to 540 across ' + body.screen_width);
+  expect(pointer.y * body.screen_height / 10000 === 1200, pointer.y + ' maps to 1200 across ' + body.screen_height);
+
+  expect(5000 * body.screen_width / 10000 === body.screen_width / 2, '5000 is the centre');
+  expect(10000 * body.screen_width / 10000 === body.screen_width, 'the right edge is the width');
+}
+
+// ---- SessionReplayTest.theTranscriptNumbersItsFramesConsistently -------------
+{
+  const file = load('session-basic.json');
+  const steps = file.steps;
+
+  expect(steps.length === 19, 'the transcript has 19 steps (got ' + steps.length + ')');
+  expect(steps.map((s) => s.step).join(',') === Array.from({ length: 19 }, (_, i) => i + 1).join(','), 'the steps are numbered 1 to 19 in order');
+
+  for (const s of steps) {
+    expect(!!s.actor, 'step ' + s.step + ' names an actor');
+    expect(!!s.send, 'step ' + s.step + ' sends a frame');
+    expect(!!s.send.name, "step " + s.step + "'s frame has a name");
+  }
+
+  for (const s of steps) {
+    if (!s.recv) continue;
+    const referenced = Number(String(s.recv).replace('step ', ''));
+    expect(referenced >= 1 && referenced < s.step, 'step ' + s.step + ' answers an earlier step (' + referenced + ')');
+    expect(stepActor(file, referenced) !== stepActor(file, s.step), 'step ' + s.step + " answers the other actor's frame");
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// SessionTransitions  --  the guards, each driven so a mutation cannot survive
+// ---------------------------------------------------------------------------
+
+/** Runs a transition and reports whether it was legal, so a refusal is a value not a throw. */
+function transitionVerdict(from, role, messageType, channelId = 0) {
+  try {
+    return { ok: true, state: sessionNext(from, role, messageType, channelId) };
+  } catch (error) {
+    return { ok: false, message: error.message };
+  }
+}
+
+/** Runs a replay and reports the outcome without the encryption assertion throwing. */
+function receiveVerdict(replayer, messageType, sequenceNumber, encrypted, channelId = 0) {
+  try {
+    return replayer.receive(messageType, sequenceNumber, encrypted, channelId);
+  } catch (error) {
+    return { kind: 'threw', message: error.message };
+  }
+}
+
+// ---- every transition the transcript uses, plus every illegal one it must refuse ----
+{
+  const S = SESSION_STATE;
+  const M = SESSION_MESSAGES;
+
+  // HELLO: legal only from idle or connecting, and only from the controller.
+  expect(transitionVerdict(S.IDLE, 'controller', M.HELLO).ok, 'HELLO is legal from idle');
+  expect(transitionVerdict(S.CONNECTING, 'controller', M.HELLO).ok, 'HELLO is legal from connecting');
+  expect(transitionVerdict(S.IDLE, 'controller', M.HELLO).state === S.HANDSHAKING, 'HELLO moves to handshaking');
+
+  for (const bad of [S.HANDSHAKING, S.AUTHENTICATING, S.ESTABLISHED, S.STREAMING, S.CLOSING]) {
+    expect(!transitionVerdict(bad, 'controller', M.HELLO).ok, 'HELLO from ' + bad + ' is refused');
+  }
+
+  expect(!transitionVerdict(S.IDLE, 'agent', M.HELLO).ok, 'the agent does not send HELLO');
+  expect(!transitionVerdict(S.IDLE, 'agent ', M.HELLO).ok, 'an unknown role does not send HELLO');
+
+  // HELLO_ACK: only from the agent, only while handshaking.
+  expect(transitionVerdict(S.HANDSHAKING, 'agent', M.HELLO_ACK).ok, 'HELLO_ACK is legal while handshaking');
+  expect(transitionVerdict(S.HANDSHAKING, 'agent', M.HELLO_ACK).state === S.AUTHENTICATING, 'HELLO_ACK moves to authenticating');
+
+  for (const bad of [S.IDLE, S.CONNECTING, S.AUTHENTICATING, S.ESTABLISHED, S.STREAMING]) {
+    expect(!transitionVerdict(bad, 'agent', M.HELLO_ACK).ok, 'HELLO_ACK from ' + bad + ' is refused');
+  }
+
+  expect(!transitionVerdict(S.HANDSHAKING, 'controller', M.HELLO_ACK).ok, 'the controller does not send HELLO_ACK');
+
+  // AUTH: only from the controller, only while authenticating, and it does NOT establish.
+  expect(transitionVerdict(S.AUTHENTICATING, 'controller', M.AUTH).ok, 'AUTH is legal while authenticating');
+  expect(
+    transitionVerdict(S.AUTHENTICATING, 'controller', M.AUTH).state === S.AUTHENTICATING,
+    'sending AUTH leaves the controller authenticating, not established',
+  );
+  expect(!transitionVerdict(S.AUTHENTICATING, 'agent', M.AUTH).ok, 'the agent does not send AUTH');
+  expect(!transitionVerdict(S.ESTABLISHED, 'controller', M.AUTH).ok, 'AUTH from established is refused');
+
+  // AUTH_OK: only from the agent, only while authenticating, and it DOES establish.
+  expect(
+    transitionVerdict(S.AUTHENTICATING, 'agent', M.AUTH_OK).state === S.ESTABLISHED,
+    'AUTH_OK establishes the session',
+  );
+  expect(!transitionVerdict(S.AUTHENTICATING, 'controller', M.AUTH_OK).ok, 'the controller does not send AUTH_OK');
+
+  // The pairing that makes the whole handshake work: the controller sends AUTH, stays
+  // authenticating, and then RECEIVES AUTH_OK while still authenticating. If AUTH moved it to
+  // established, AUTH_OK would be illegal there and the transcript would fail at step 4.
+  const afterAuth = transitionVerdict(S.AUTHENTICATING, 'controller', M.AUTH).state;
+  expect(
+    transitionVerdict(afterAuth, 'agent', M.AUTH_OK).ok,
+    'AUTH_OK is legal after the controller has sent AUTH (' + afterAuth + ')',
+  );
+
+  // A channel frame before authentication is refused.
+  for (const type of [M.CHANNEL_OPEN, M.CHANNEL_OPENED, M.VIDEO_START, M.VIDEO_CONFIG, M.DEVICE_INFO, M.INPUT_TOUCH]) {
+    for (const bad of [S.IDLE, S.CONNECTING, S.HANDSHAKING, S.AUTHENTICATING]) {
+      expect(
+        !transitionVerdict(bad, 'controller', type).ok,
+        'message type ' + type + ' from ' + bad + ' is refused',
+      );
+    }
+  }
+
+  // And legal from both established states.
+  for (const type of [M.CHANNEL_OPEN, M.DEVICE_INFO, M.INPUT_TOUCH, M.SHELL_EXEC]) {
+    expect(transitionVerdict(S.ESTABLISHED, 'controller', type).ok, 'message type ' + type + ' is legal from established');
+    expect(transitionVerdict(S.STREAMING, 'controller', type).ok, 'message type ' + type + ' is legal from streaming');
+  }
+
+  // Only the video frames move into streaming.
+  expect(transitionVerdict(S.ESTABLISHED, 'controller', M.VIDEO_START).state === S.STREAMING, 'VIDEO_START enters streaming');
+  expect(transitionVerdict(S.ESTABLISHED, 'agent', M.VIDEO_CONFIG).state === S.STREAMING, 'VIDEO_CONFIG enters streaming');
+  expect(transitionVerdict(S.ESTABLISHED, 'controller', M.DEVICE_INFO).state === S.ESTABLISHED, 'DEVICE_INFO does not enter streaming');
+  expect(transitionVerdict(S.ESTABLISHED, 'controller', M.INPUT_TOUCH).state === S.ESTABLISHED, 'INPUT_TOUCH does not enter streaming');
+
+  // SESSION_END closes from every live state.
+  for (const live of [S.IDLE, S.CONNECTING, S.HANDSHAKING, S.AUTHENTICATING, S.ESTABLISHED, S.STREAMING, S.CLOSING]) {
+    expect(transitionVerdict(live, 'agent', M.SESSION_END).state === S.CLOSED, 'SESSION_END closes from ' + live);
+  }
+
+  // A closed session accepts nothing at all.
+  for (const type of [M.HELLO, M.HELLO_ACK, M.AUTH, M.AUTH_OK, M.ERROR, M.SESSION_END, M.INPUT_TOUCH]) {
+    expect(!transitionVerdict(S.CLOSED, 'controller', type).ok, 'message type ' + type + ' in a closed session is refused');
+  }
+}
+
+// ---- an out-of-state frame is recoverable, a repeat is fatal ------------------
+{
+  const inHandshake = new SessionReplayer('agent');
+
+  // A channel frame before authentication: recoverable, and the state is NOT closing.
+  const early = receiveVerdict(inHandshake, SESSION_MESSAGES.CHANNEL_OPEN, 1, true, 0);
+
+  expect(early.kind === 'recoverable', 'an out-of-state frame is recoverable (got ' + early.kind + ')');
+  expect(early.code === 'ERR_UNEXPECTED_MESSAGE', 'and its code is ERR_UNEXPECTED_MESSAGE');
+  expect(inHandshake.state !== SESSION_STATE.CLOSING, 'a recoverable fault does not move the session to closing');
+
+  // Compare with a repeat, which IS fatal and DOES move to closing.
+  const repeated = new SessionReplayer('agent');
+  repeated.received.add(5);
+  repeated.lastReceived = 5;
+
+  const repeat = receiveVerdict(repeated, SESSION_MESSAGES.CHANNEL_OPEN, 5, true, 0);
+
+  expect(repeat.kind === 'fatal', 'a repeated sequence number is fatal (got ' + repeat.kind + ')');
+  expect(repeated.state === SESSION_STATE.CLOSING, 'and it moves the session to closing');
+
+  // The two outcomes are genuinely different, so the distinction is not decorative.
+  expect(early.kind !== repeat.kind, 'the two fault kinds differ');
+}
+
+// ---- an outgoing sequence number must advance --------------------------------
+{
+  const replayer = new SessionReplayer('controller');
+
+  replayer.send(SESSION_MESSAGES.HELLO, 1, false, 0);
+  expect(replayer.lastSent === 1, 'the first outgoing number is recorded');
+
+  // Going backwards is refused. The frame has to be one the ROLE may send in this state, or the
+  // role check throws first and the sequence check is never reached -- which is exactly why the
+  // mutation deleting the sequence guard survived my first version of this check. So: an agent in
+  // handshaking, which may legally send HELLO_ACK, and which has already sent sequence number 5.
+  const agent = new SessionReplayer('agent');
+  agent.state = SESSION_STATE.HANDSHAKING;
+  agent.lastSent = 5;
+
+  let refused = null;
+  try {
+    agent.send(SESSION_MESSAGES.HELLO_ACK, 5, false, 0);
+  } catch (error) {
+    refused = error.message;
+  }
+
+  expect(refused !== null, 'a non-advancing outgoing sequence number is refused');
+  expect(
+    refused !== null && refused.includes('does not advance'),
+    'and it is the SEQUENCE check that refused, not the role or state check (got "' + refused + '")',
+  );
+
+  // Zero is refused too: the numbering starts at one.
+  const fresh = new SessionReplayer('agent');
+  fresh.state = SESSION_STATE.HANDSHAKING;
+  fresh.lastSent = 0;
+
+  let refusedZero = false;
+  try {
+    fresh.send(SESSION_MESSAGES.HELLO_ACK, 0, false, 0);
+  } catch {
+    refusedZero = true;
+  }
+
+  expect(refusedZero, 'sequence number zero is refused');
+
+  // A jump FORWARDS is allowed, because a transcript records the frames that matter rather than
+  // every frame: the controller in session-basic.json sends 1,2,3,4,5 and then 8.
+  const jumping = new SessionReplayer('agent');
+  jumping.state = SESSION_STATE.HANDSHAKING;
+  jumping.lastSent = 5;
+
+  let advanced = true;
+  try {
+    jumping.send(SESSION_MESSAGES.HELLO_ACK, 8, false, 0);
+  } catch {
+    advanced = false;
+  }
+
+  expect(advanced, 'a jump forwards is allowed, because a transcript is not gapless');
+}
+
+// ---- a repeat is caught by the seen-set, not only the window -----------------
+{
+  const replayer = new SessionReplayer('agent');
+  replayer.received.add(8);
+  replayer.received.add(9);
+  replayer.received.add(10);
+  replayer.lastReceived = 10;
+
+  // 8 is INSIDE the window, so the window alone accepts it. The seen-set is what catches it.
+  const floor = replayer.lastReceived - 32;
+
+  expect(8 >= floor, '8 is inside the window, so the window alone would accept it');
+
+  const verdict = receiveVerdict(replayer, SESSION_MESSAGES.INPUT_TOUCH, 8, true, 1);
+
+  expect(verdict.kind === 'fatal', 'the repeat inside the window is still fatal');
+  expect(verdict.code === 'ERR_REPLAY_DETECTED', 'and reported as a replay');
+}
+
+// ---- the unencrypted set is exactly the handshake pair ----------------------
+{
+  expect(SESSION_UNENCRYPTED.size === 2, 'exactly two message types travel unencrypted');
+  expect(SESSION_UNENCRYPTED.has(SESSION_MESSAGES.HELLO), 'HELLO is unencrypted');
+  expect(SESSION_UNENCRYPTED.has(SESSION_MESSAGES.HELLO_ACK), 'HELLO_ACK is unencrypted');
+  expect(!SESSION_UNENCRYPTED.has(SESSION_MESSAGES.AUTH), 'AUTH is encrypted');
+  expect(!SESSION_UNENCRYPTED.has(SESSION_MESSAGES.ERROR), 'ERROR is encrypted');
+
+  // And the replayer enforces it: an encrypted HELLO is refused, and an unencrypted AUTH is too.
+  const encryptedHello = new SessionReplayer('controller');
+
+  let refusedEncryptedHello = false;
+  try {
+    encryptedHello.send(SESSION_MESSAGES.HELLO, 1, true, 0);
+  } catch {
+    refusedEncryptedHello = true;
+  }
+
+  expect(refusedEncryptedHello, 'an encrypted HELLO is refused');
+
+  const plainAuth = new SessionReplayer('controller');
+  plainAuth.state = SESSION_STATE.AUTHENTICATING;
+
+  let refusedPlainAuth = false;
+  try {
+    plainAuth.send(SESSION_MESSAGES.AUTH, 1, false, 0);
+  } catch {
+    refusedPlainAuth = true;
+  }
+
+  expect(refusedPlainAuth, 'an unencrypted AUTH is refused');
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------

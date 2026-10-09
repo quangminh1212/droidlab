@@ -211,6 +211,85 @@ const MUTATIONS = [
     to: '  return true;',
   },
   {
+    rule: 'session: the message codes are the registry 1-based codes, not the JSON keys',
+    from: 'const SESSION_MESSAGES = {\n  HELLO: 1,',
+    to: 'const SESSION_MESSAGES = {\n  HELLO: 0,',
+  },
+  {
+    rule: 'session: HELLO is only legal from idle or connecting',
+    from: "      require_(from === SESSION_STATE.IDLE || from === SESSION_STATE.CONNECTING, 'HELLO is sent from idle or connecting, not from ' + from);",
+    to: '      require_(true, "HELLO");',
+  },
+  {
+    rule: 'session: only the controller sends HELLO',
+    from: "      require_(role === 'controller', 'only the controller sends HELLO');",
+    to: '      require_(true, "HELLO role");',
+  },
+  {
+    rule: 'session: HELLO_ACK answers HELLO, so the state is handshaking',
+    from: "      require_(from === SESSION_STATE.HANDSHAKING, 'HELLO_ACK answers HELLO, so the state is handshaking, not ' + from);",
+    to: '      require_(true, "HELLO_ACK");',
+  },
+  {
+    rule: 'session: sending AUTH leaves the controller authenticating, not established',
+    // The needle stops at the return, which is unique once the AUTH case's own comment is
+    // included. A first version included the apostrophe in "agent's", and the escaping mangled
+    // it into a literal backslash-quote so the needle matched nothing -- reported as an
+    // unappliable mutation, which is the tool working.
+    from:
+      "      require_(from === SESSION_STATE.AUTHENTICATING, 'AUTH is sent while authenticating, not from ' + from);\n" +
+      '\n' +
+      '      // Sending AUTH does NOT establish the session: the session is established when the\n' +
+      '      // HANDSHAKE completes, which is when both proofs have been exchanged. The controller has\n' +
+      '      // sent its proof but has not checked the agent' +
+      "'" +
+      's, so it remains authenticating.\n' +
+      '      return SESSION_STATE.AUTHENTICATING;',
+    to:
+      "      require_(from === SESSION_STATE.AUTHENTICATING, 'AUTH is sent while authenticating, not from ' + from);\n" +
+      '      return SESSION_STATE.ESTABLISHED;',
+  },
+  {
+    rule: 'session: only the video frames move the session into streaming',
+    from: "    case SESSION_MESSAGES.VIDEO_START:\n    case SESSION_MESSAGES.VIDEO_CONFIG:\n      require_(isEstablished(from), 'video starts after authentication, not from ' + from);\n      return SESSION_STATE.STREAMING;",
+    to: "    case SESSION_MESSAGES.VIDEO_START:\n    case SESSION_MESSAGES.VIDEO_CONFIG:\n      require_(isEstablished(from), 'video starts after authentication, not from ' + from);\n      return from;",
+  },
+  {
+    rule: 'session: a frame from before authentication is refused',
+    from: "      require_(isEstablished(from), 'a channel is opened after authentication, not from ' + from);",
+    to: '      require_(true, "channel");',
+  },
+  {
+    rule: 'session: a repeated sequence number is fatal',
+    from: "    if (this.received.has(sequenceNumber) || (floor !== null && sequenceNumber < floor)) {\n      this.state = SESSION_STATE.CLOSING;\n      return { kind: 'fatal', code: 'ERR_REPLAY_DETECTED' };\n    }",
+    to: '    ',
+  },
+  {
+    rule: 'session: a repeated sequence number is fatal and not merely recoverable',
+    from: "      return { kind: 'fatal', code: 'ERR_REPLAY_DETECTED' };",
+    to: "      return { kind: 'recoverable', code: 'ERR_REPLAY_DETECTED' };",
+  },
+  {
+    rule: 'session: an out-of-state frame is recoverable, not fatal',
+    from: "      return { kind: 'recoverable', code: 'ERR_UNEXPECTED_MESSAGE' };",
+    to: "      return { kind: 'fatal', code: 'ERR_UNEXPECTED_MESSAGE' };",
+  },
+  {
+    rule: 'session: an outgoing sequence number must advance',
+    from: '    if (this.lastSent !== null && sequenceNumber <= this.lastSent) {\n      throw new Error(\'outgoing sequence number \' + sequenceNumber + \' does not advance past \' + this.lastSent);\n    }',
+    to: '    ',
+  },
+  {
+    rule: 'session: a closed session accepts no frames',
+    from: "  require_(from !== SESSION_STATE.CLOSED, 'the session is closed and accepts no frames');",
+    to: '  require_(true, "closed");',
+  },
+  {
+    rule: 'session: the unencrypted set is exactly the handshake pair',
+    from: 'const SESSION_UNENCRYPTED = new Set([SESSION_MESSAGES.HELLO, SESSION_MESSAGES.HELLO_ACK]);',
+    to: 'const SESSION_UNENCRYPTED = new Set([SESSION_MESSAGES.HELLO, SESSION_MESSAGES.HELLO_ACK, SESSION_MESSAGES.ERROR]);',
+  },
+  {
     rule: 'crypto: nothing accepted yet is not the number zero',
     from: '  if (highestAccepted === null || highestAccepted === undefined) {\n    return { accepted: true, replay: false };\n  }',
     to: '  if (highestAccepted === undefined) highestAccepted = 0;',

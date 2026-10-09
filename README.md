@@ -393,7 +393,7 @@ its arithmetic is reimplemented in JavaScript within the gate and run against th
 vector files. This is evidence for the Kotlin's *logic* and never for its compilation:
 
 ```text
-ok    667 Kotlin-mirrored checks hold against the real vectors
+ok    990 Kotlin-mirrored checks hold against the real vectors
 ok    framing decode, prefix arithmetic, round-trip, AAD and reserved flags
 ok    cbOR shortest-encoding boundaries and the canonical empty body
 ok    all 22 malformed vectors and all 3 sequence vectors classify as declared
@@ -406,9 +406,9 @@ fails if the gate does not notice. A check that cannot fail is worse than no che
 because it reports coverage of a rule nothing is testing:
 
 ```text
-ok    baseline passes with 667 checks
-ok    34 mutations declared
-ok    all 34 mutations caught
+ok    baseline passes with 990 checks
+ok    47 mutations declared
+ok    all 47 mutations caught
 ok    the gate passes again after restoring
 ```
 
@@ -416,7 +416,9 @@ This step exists because it has already found real holes. A video-clamp guard wa
 for every vector input; three crypto checks could not fail — the pairing code's byte
 order, its zero padding, and the replay window's null high-water mark; and the beacon's
 ascending key order could not fail, because the fields in the vector file are written in
-an order that is already sorted. Each of them *looked* covered until a mutation survived.
+an order that is already sorted. Seven of the session state machine's transition guards
+survived as well, including the sequence-advance rule. Each of them *looked* covered until
+a mutation survived.
 
 **6. README consistency check** — reads the numbers out of this file and fails if they
 no longer match the run (43 checks):
