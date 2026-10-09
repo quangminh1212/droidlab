@@ -1683,6 +1683,431 @@ function openChannel(requested, openChannels, maxChannels) {
   );
 }
 // ---------------------------------------------------------------------------
+// VersionNegotiation  --  mirror of VersionNegotiation.kt
+// ---------------------------------------------------------------------------
+
+const CURRENT_MAJOR = 1;
+
+/** Parses `major.minor`, or null when the text is not that shape. */
+function parseVersion(text) {
+  if (typeof text !== 'string') return null;
+
+  const parts = text.split('.');
+  if (parts.length !== 2) return null;
+
+  // A leading sign is not a version, and Number() would accept "-1".
+  if (parts[0].startsWith('-') || parts[1].startsWith('-')) return null;
+  if (!/^\d+$/.test(parts[0]) || !/^\d+$/.test(parts[1])) return null;
+
+  return { major: Number(parts[0]), minor: Number(parts[1]) };
+}
+
+/** Formats a parsed version. */
+const formatVersion = (v) => `${v.major}.${v.minor}`;
+
+/** Compares numerically, so 1.10 > 1.9. A string compare orders them the other way. */
+function compareVersion(a, b) {
+  if (a.major !== b.major) return a.major - b.major;
+  return a.minor - b.minor;
+}
+
+/** Mirror of VersionNegotiation.negotiate. */
+function negotiateVersion(controllerSupported, agentSupported) {
+  const controller = controllerSupported.map(parseVersion).filter(Boolean);
+  const agent = agentSupported.map(parseVersion).filter(Boolean);
+
+  if (controller.length === 0 || agent.length === 0) {
+    return { version: null, error: 'ERR_VERSION_MISMATCH' };
+  }
+
+  const common = controller.filter((c) =>
+    agent.some((a) => a.major === c.major && a.minor === c.minor));
+
+  if (common.length === 0) return { version: null, error: 'ERR_VERSION_MISMATCH' };
+
+  // The MAXIMUM of the intersection, not the controller's first preference.
+  const best = common.reduce((x, y) => (compareVersion(y, x) > 0 ? y : x));
+
+  return { version: formatVersion(best), error: null };
+}
+
+/** Mirror of VersionNegotiation.checkAnswer. */
+function checkVersionAnswer(controllerSupported, agentAnswered) {
+  const offered = controllerSupported.map(parseVersion).filter(Boolean);
+  const answered = parseVersion(agentAnswered);
+
+  if (answered === null) return { version: null, error: 'ERR_VERSION_MISMATCH' };
+
+  // Membership in what was OFFERED, not merely a well-formed version.
+  const isOffered = offered.some((o) => o.major === answered.major && o.minor === answered.minor);
+
+  if (!isOffered) return { version: null, error: 'ERR_VERSION_MISMATCH' };
+
+  return { version: formatVersion(answered), error: null };
+}
+
+/** Mirror of VersionNegotiation.checkHeaderMajor. */
+function checkHeaderMajor(headerVersion) {
+  if (headerVersion !== CURRENT_MAJOR) return { version: null, error: 'ERR_VERSION_MISMATCH' };
+  return { version: '1.0', error: null };
+}
+
+// ---- VersionNegotiationTest.theRuleIsHighestCommonVersionOrFail -----------------
+{
+  const file = load('version-negotiation.json');
+
+  expect(
+    file.rule === 'highest_common_version_or_fail',
+    `the file declares the rule the implementation applies (got "${file.rule}")`,
+  );
+
+  const pairVectors = file.vectors.filter(
+    (v) => v.controller_supported !== undefined && v.agent_answered === undefined,
+  );
+
+  expect(pairVectors.length >= 6, `at least 6 pair vectors (found ${pairVectors.length})`);
+
+  for (const v of pairVectors) {
+    const negotiated = negotiateVersion(v.controller_supported, v.agent_supported);
+
+    if (v.expected_negotiated === null) {
+      expect(negotiated.version === null, `${v.id} is declared a failure`);
+      continue;
+    }
+
+    // "Common" means present in BOTH lists. A result outside either one would be a version a
+    // peer never offered, which is the security-relevant half of this rule.
+    expect(
+      v.controller_supported.includes(negotiated.version),
+      `${v.id} negotiated a version the controller did not offer (${negotiated.version})`,
+    );
+    expect(
+      v.agent_supported.includes(negotiated.version),
+      `${v.id} negotiated a version the agent did not offer (${negotiated.version})`,
+    );
+  }
+}
+
+// ---- VersionNegotiationTest.everyPairVectorNegotiatesItsDeclaredVersion ---------
+{
+  const file = load('version-negotiation.json');
+  const pairVectors = file.vectors.filter(
+    (v) => v.controller_supported !== undefined && v.agent_answered === undefined,
+  );
+
+  for (const v of pairVectors) {
+    const negotiated = negotiateVersion(v.controller_supported, v.agent_supported);
+
+    if (v.expected_error) {
+      expect(negotiated.version === null, `${v.id} is declared a failure`);
+      expect(
+        negotiated.error === v.expected_error,
+        `${v.id} error is ${v.expected_error} (got ${negotiated.error})`,
+      );
+    } else {
+      expect(
+        negotiated.version === v.expected_negotiated,
+        `${v.id} negotiated ${v.expected_negotiated} (got ${negotiated.version})`,
+      );
+      expect(negotiated.error === null, `${v.id} carries no error when it succeeds`);
+    }
+  }
+}
+
+// ---- VersionNegotiationTest.theHighestCommonVersionWinsNotTheFirstPreference ----
+{
+  const file = load('version-negotiation.json');
+  const v = file.vectors.find((x) => x.id === 'version.both-newer-and-older');
+
+  expect(!!v, 'version.both-newer-and-older exists');
+  if (v) {
+    // The scenario is only interesting if the first preferences differ, so the test would be
+    // checking something real.
+    expect(v.controller_supported[0] === '2.0', "the controller's first preference is 2.0");
+    expect(v.agent_supported[0] === '1.1', "the agent's first preference is 1.1");
+    expect(
+      v.controller_supported[0] !== v.agent_supported[0],
+      'the two first preferences differ',
+    );
+
+    const negotiated = negotiateVersion(v.controller_supported, v.agent_supported);
+
+    expect(
+      negotiated.version === '1.1',
+      `the highest common version is 1.1 (got ${negotiated.version})`,
+    );
+
+    // Explicitly not the controller's head: an implementation returning its own first
+    // preference would elect 2.0, a version the agent never offered.
+    expect(
+      negotiated.version !== v.controller_supported[0],
+      "the result is not the controller's first preference",
+    );
+  }
+}
+
+// ---- VersionNegotiationTest.versionsCompareNumericallyNotLexically -------------
+{
+  // The bug this pins: a string comparison orders "1.10" before "1.9", because '1' < '9'.
+  const w = parseVersion('1.10');
+  const n = parseVersion('1.9');
+
+  expect(compareVersion(w, n) > 0, '1.10 is greater than 1.9 numerically');
+  expect('1.10' < '1.9', 'lexically, 1.10 sorts before 1.9 -- which is the trap');
+
+  // And it changes a real negotiation result: with both offered, 1.10 must win.
+  const negotiated = negotiateVersion(['1.9', '1.10'], ['1.9', '1.10']);
+
+  expect(negotiated.version === '1.10', `1.10 is preferred over 1.9 (got ${negotiated.version})`);
+
+  // The major still dominates the minor.
+  expect(
+    compareVersion(parseVersion('2.0'), parseVersion('1.99')) > 0,
+    'a higher major beats any minor',
+  );
+}
+
+// ---- VersionNegotiationTest.aMalformedVersionIsRefused --------------------------
+{
+  // A format that tolerates several shapes has several ways to disagree about meaning, so
+  // only a plain major.minor pair is accepted.
+  for (const text of ['1', '1.0.0', '1.', '.1', 'one.zero', '', '-1.0', '1.-0', '1 .0']) {
+    expect(parseVersion(text) === null, `"${text}" is not a version`);
+  }
+
+  const negotiated = negotiateVersion(['garbage'], ['1.0']);
+
+  expect(negotiated.version === null, 'a list with no parseable version cannot agree');
+  expect(negotiated.error === 'ERR_VERSION_MISMATCH', 'it reports a version mismatch');
+}
+
+// ---- VersionNegotiationTest.neitherSideDowngradesSilently -----------------------
+{
+  const file = load('version-negotiation.json');
+
+  const agentRefuses = file.vectors.find((v) => v.id === 'version.agent-does-not-downgrade-silently');
+  expect(!!agentRefuses, 'the agent-refuses vector exists');
+  if (agentRefuses) {
+    const verdict = negotiateVersion(agentRefuses.controller_supported, agentRefuses.agent_supported);
+
+    expect(verdict.version === null, 'the agent refuses a version it does not know');
+    expect(verdict.error === 'ERR_VERSION_MISMATCH', 'the refusal is a version mismatch');
+  }
+
+  const controllerRefuses = file.vectors.find((v) => v.id === 'version.controller-does-not-downgrade-silently');
+  expect(!!controllerRefuses, 'the controller-refuses vector exists');
+  if (controllerRefuses) {
+    const verdict = checkVersionAnswer(controllerRefuses.controller_supported, controllerRefuses.agent_answered);
+
+    expect(verdict.version === null, 'the controller refuses an unoffered answer');
+    expect(verdict.error === 'ERR_VERSION_MISMATCH', 'the refusal is a version mismatch');
+
+    // The answer is well-formed, which is the point: it is refused for being unoffered, not
+    // for being unparseable. A check that only validated the format would accept it.
+    expect(
+      parseVersion(controllerRefuses.agent_answered) !== null,
+      'the rejected answer is a well-formed version, so the rejection is about membership',
+    );
+
+    // And an offered answer is accepted, which brackets the rule.
+    const accepted = checkVersionAnswer(['1.1', '1.0'], '1.0');
+    expect(accepted.version === '1.0', 'an offered answer is accepted');
+  }
+}
+
+// ---- VersionNegotiationTest.aVersionMismatchIsFatal ----------------------------
+{
+  const file = load('version-negotiation.json');
+
+  for (const v of file.vectors) {
+    if (!v.expected_error) continue;
+
+    expect(v.expected_error === 'ERR_VERSION_MISMATCH', `${v.id} uses the version error`);
+
+    // Fatal, because the header's version field decides how everything after it is parsed.
+    // There is no partial recovery: a receiver that does not know the version does not know
+    // the frame's shape.
+    expect(v.expected_severity === 'fatal', `${v.id} is declared fatal`);
+  }
+}
+
+// ---- VersionNegotiationTest.theHeaderMajorIsCheckedBeforeTheBodyString ----------
+{
+  const file = load('version-negotiation.json');
+  const v = file.vectors.find((x) => x.id === 'version.major-only-in-version-field');
+
+  expect(!!v, 'version.major-only-in-version-field exists');
+  if (v) {
+    expect(v.header_version_field === 1, 'the header carries the major only');
+    expect(v.hello_proto_string === '1.1', 'the body carries the full version');
+    expect(v.expected === 'accepted', 'a known major with a newer minor is accepted');
+
+    expect(checkHeaderMajor(v.header_version_field).version === '1.0', 'the known major passes');
+
+    // The header field is the major, so 1 is all a 1.x frame can say. The MINOR is what the
+    // body carries, and this vector's 1.1 does NOT negotiate against a peer that knows only
+    // 1.0: the rule is highest COMMON version, and 1.0 and 1.1 share none.
+    //
+    // That is the honest reading and worth stating, because "a minor bump is compatible" is a
+    // tempting gloss that the rule does not actually implement. Compatibility of a minor bump
+    // is a property of the CHANGE (below), not of the negotiation: what makes an additive
+    // change safe is that an old peer ignores what it does not know, and the version lists
+    // here are the versions a peer can SPEAK, not a range it tolerates.
+    const negotiated = negotiateVersion(['1.0'], [v.hello_proto_string]);
+
+    expect(
+      negotiated.version === null,
+      `1.0 and 1.1 share no version, so the negotiation fails (got ${negotiated.version})`,
+    );
+    expect(negotiated.error === 'ERR_VERSION_MISMATCH', 'and it fails as a version mismatch');
+
+    // A peer that knows both agrees the HIGHEST common one, which is 1.1 -- not 1.0, even
+    // though 1.0 is also common. Taking the lower common version would be a silent downgrade,
+    // which is the behaviour the whole rule exists to prevent.
+    const common = negotiateVersion(['1.1', '1.0'], [v.hello_proto_string]);
+    expect(common.version === '1.1', `a peer knowing both agrees the highest common one, 1.1 (got ${common.version})`);
+  }
+
+  const tooNew = file.vectors.find((x) => x.id === 'version.header-major-too-new');
+  expect(!!tooNew, 'version.header-major-too-new exists');
+  if (tooNew) {
+    const refused = checkHeaderMajor(tooNew.header_version_field);
+
+    expect(refused.version === null, 'an unknown major fails');
+    expect(refused.error === 'ERR_VERSION_MISMATCH', 'it reports a version mismatch');
+    expect(checkHeaderMajor(1).version === '1.0', 'the known major is accepted');
+  }
+}
+
+/**
+ * Mirror of VersionNegotiation.requiresMajorBump.
+ *
+ * Two families of name: a rule stated as `additive`/`breaking`, and a vector naming the
+ * specific change. Both are needed -- the first is what a reviewer reasons about, the second
+ * is what makes the example concrete. A name indicating neither is refused rather than
+ * defaulted to the safe answer, because defaulting would give a change nobody classified minor
+ * treatment, and a minor treatment of a breaking change is the silent compat break the rule
+ * exists to stop.
+ */
+function requiresMajorBump(changeKind) {
+  if (changeKind === 'additive' || changeKind.startsWith('add_')) return false;
+  if (changeKind === 'breaking' || changeKind.startsWith('change_') || changeKind.startsWith('remove_')) return true;
+  throw new Error(`unknown change kind "${changeKind}"`);
+}
+
+/**
+ * As [requiresMajorBump], but reports a refusal as a value instead of an exception.
+ *
+ * The throwing form is the mirror's faithful copy of the Kotlin, which refuses an
+ * unclassifiable name rather than defaulting. That is the right contract and the Kotlin should
+ * keep it. But calling it directly from a check means an unrecognisable name kills the whole
+ * run with a stack trace instead of naming the check that failed -- and during
+ * mutation-testing that reads as "no output", which is how I nearly concluded this rule was
+ * uncovered when it was in fact covered.
+ *
+ * So the checks call this: the exception becomes a verifiable value, and the refusal itself is
+ * asserted like anything else.
+ */
+function classifyBump(changeKind) {
+  try {
+    return requiresMajorBump(changeKind);
+  } catch {
+    return 'refused';
+  }
+}
+
+// ---- VersionNegotiationTest.anAdditiveChangeIsNotAMajorBump --------------------
+{
+  const file = load('version-negotiation.json');
+
+  const additive = file.vectors.find((v) => v.id === 'version.additive-change-is-not-a-major-bump');
+  const breaking = file.vectors.find((v) => v.id === 'version.breaking-change-requires-major-bump');
+
+  expect(!!additive, 'the additive-change vector exists');
+  expect(!!breaking, 'the breaking-change vector exists');
+
+  if (additive && breaking) {
+    // The kinds are descriptive names, not the literals "additive" and "breaking". What makes
+    // a change additive or breaking is the DECLARED bump, which is the field the rule reads.
+    expect(additive.expected_version_bump === false, 'an additive change does not bump the version');
+    expect(breaking.expected_version_bump === true, 'a breaking change bumps the version');
+    expect(
+      additive.change_kind !== breaking.change_kind,
+      'the two change kinds differ, or the pair tests nothing',
+    );
+
+    // The classification is actually exercised, in both families of name. This is not padding:
+    // without these calls the function above is defined and never used, and mutation-testing
+    // showed that deleting either prefix branch then left every check green. A rule no check
+    // can fail on is worse than no rule, because it looks covered.
+    expect(
+      classifyBump(additive.change_kind) === false,
+      `the vector-style name "${additive.change_kind}" is not a major bump`,
+    );
+    expect(
+      classifyBump(breaking.change_kind) === true,
+      `the vector-style name "${breaking.change_kind}" is a major bump`,
+    );
+    expect(classifyBump('additive') === false, 'the rule-style name "additive" is not a major bump');
+    expect(classifyBump('breaking') === true, 'the rule-style name "breaking" is a major bump');
+    expect(
+      classifyBump('remove_a_field') === true,
+      'a removal is a major bump, like any other breaking change',
+    );
+
+    // A name from neither family is refused rather than defaulted -- the exception is the
+    // contract, and this asserts that it happens. Defaulting would give a change nobody
+    // classified the milder treatment, and a minor treatment of a breaking change is the
+    // silent compat break the version rule exists to prevent.
+    expect(
+      classifyBump('something_nobody_classified') === 'refused',
+      'an unclassifiable change kind is refused, not defaulted',
+    );
+
+    // An old peer must keep working by ignoring what it does not know -- which is the same
+    // forward-compatibility rule the malformed and malformed surfaces pin elsewhere, stated
+    // here as the reason a minor bump is safe.
+    expect(
+      additive.old_peer_behaviour.includes('ignore_unknown_key'),
+      'the additive change relies on an old peer ignoring unknown keys',
+    );
+
+    // A breaking change names the documents it must touch: a wire change that leaves the RFC
+    // and the vectors alone is unpinned drift.
+    expect(
+      Array.isArray(breaking.required_documents) && breaking.required_documents.length > 0,
+      'a breaking change names its documents',
+    );
+    expect(
+      breaking.required_documents.some((d) => d.startsWith('docs/rfc/')),
+      'a breaking change touches the RFC',
+    );
+    expect(
+      breaking.required_documents.some((d) => d.startsWith('protocol/vectors/')),
+      'a breaking change touches the vectors, or the change is unpinned',
+    );
+  }
+}
+
+// ---- VersionNegotiationTest.theListsAreOrderedMostPreferredFirst ---------------
+{
+  const file = load('version-negotiation.json');
+  const v = file.vectors.find((x) => x.id === 'version.both-newer-and-older');
+
+  expect(!!v, 'version.both-newer-and-older exists');
+  if (v) {
+    for (const [name, list] of [['controller', v.controller_supported], ['agent', v.agent_supported]]) {
+      const parsed = list.map(parseVersion);
+      const sorted = [...parsed].sort((a, b) => compareVersion(b, a));
+
+      expect(
+        parsed.map(formatVersion).join(',') === sorted.map(formatVersion).join(','),
+        `the ${name}'s list is most-preferred-first (${list.join(', ')})`,
+      );
+    }
+  }
+}
+// ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
 
