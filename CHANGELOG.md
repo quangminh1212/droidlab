@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message-type registry, capability negotiation with limit clamping, version
   negotiation, discovery advertisement, the session state machine with sequence
   numbering and replay detection, and the shell policy. **235 tests** across
-  fourteen conformance suites, all ten vector files wired to the versions on disk,
+  seventeen test binaries, all ten vector files wired to the versions on disk,
   `cargo clippy -D warnings` clean, `cargo fmt --check` clean, and CI runs the gate.
 
 ### Fixed

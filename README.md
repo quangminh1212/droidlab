@@ -590,7 +590,7 @@ cannot yet assert them it asserts that it cannot.
 
 M1 is split rather than marked done, because its three implementations are not in the same
 state. The C# codec passes every vector under `dotnet test`. The Rust core compiles, lints
-clean under `-D warnings`, and passes 235 tests across fourteen conformance suites — framing,
+clean under `-D warnings`, and passes 235 tests across seventeen test binaries — framing,
 malformed framing, cbOR, the error-code registry, the limits, wire efficiency, crypto
 conformance, pairing, frame classification, the message-type registry, capability negotiation,
 version negotiation, discovery advertisement, the session state machine and the shell policy.
