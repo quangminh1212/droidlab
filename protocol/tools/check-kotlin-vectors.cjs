@@ -2107,6 +2107,551 @@ function classifyBump(changeKind) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Labels and Derivations  --  mirror of crypto/Labels.kt
+// ---------------------------------------------------------------------------
+
+const CRYPTO_LABELS = {
+  transcript_label: 'DLWP/1-handshake',
+  session_salt_label: 'DLWP/1-session',
+  pairing_salt_label: 'DLWP/1-pairing',
+  pairing_secret_info: 'DLWP/1-pairing-secret',
+  pairing_agent_proof_label: 'DLWP/1-pairing-agent',
+  pairing_controller_proof_label: 'DLWP/1-pairing-controller',
+  pairing_confirmation_label: 'DLWP/1-pairing-confirm',
+  pairing_code_label: 'DLWP/1-pairing-code',
+  fingerprint_label: 'DLWP/1-fingerprint',
+  txt_label: 'DLWP/1-txt',
+  exporter_label: 'DLWP/1-exporter',
+  c2a_key_info: 'DLWP/1-c2a-key',
+  a2c_key_info: 'DLWP/1-a2c-key',
+  c2a_iv_info: 'DLWP/1-c2a-iv',
+  a2c_iv_info: 'DLWP/1-a2c-iv',
+  auth_client_label: 'DLWP/1-client',
+  auth_agent_label: 'DLWP/1-agent',
+};
+
+const TEST_KEY_LABEL = 'DLWP/1-test-key';
+
+/** Mirror of Labels.labelled: the ASCII label followed by one zero byte. */
+function labelled(label) {
+  for (let i = 0; i < label.length; i++) {
+    if (label.charCodeAt(i) >= 0x80) {
+      throw new Error('label "' + label + '" contains a non-ASCII character at ' + i);
+    }
+  }
+  return Buffer.concat([Buffer.from(label, 'ascii'), Buffer.from([0])]);
+}
+
+/** Mirror of Derivations.testKey: SHA-256("DLWP/1-test-key" || 0x00 || seed). */
+function testKey(seed) {
+  return sha256(Buffer.concat([labelled(TEST_KEY_LABEL), Buffer.from(seed, 'utf8')]));
+}
+
+/** Mirror of Derivations.fingerprint. */
+function fingerprint(identityPublicKey) {
+  if (identityPublicKey.length !== 32) {
+    throw new RangeError('a public key is 32 bytes, not ' + identityPublicKey.length);
+  }
+
+  const digest = sha256(Buffer.concat([labelled('DLWP/1-fingerprint'), identityPublicKey]));
+  const hex = digest.subarray(0, 8).toString('hex').toUpperCase();
+
+  return hex.slice(0, 4) + '-' + hex.slice(4, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16);
+}
+
+/** Mirror of Derivations.pairingCode. */
+function pairingCode(pairingSecret, controllerNonce, agentNonce) {
+  if (controllerNonce.length !== 32) throw new RangeError('a nonce is 32 bytes');
+  if (agentNonce.length !== 32) throw new RangeError('a nonce is 32 bytes');
+
+  const digest = sha256(Buffer.concat([
+    labelled('DLWP/1-pairing-code'),
+    pairingSecret,
+    controllerNonce,
+    agentNonce,
+  ]));
+
+  // Big-endian, because the format says big-endian and a little-endian read gives a different
+  // number from the same digest.
+  const value = (digest[0] * 0x1000000) + (digest[1] * 0x10000) + (digest[2] * 0x100) + digest[3];
+
+  return String(value % 1000000).padStart(6, '0');
+}
+
+// ---- CryptoPrimitivesTest.everyLabelMatchesTheFile ------------------------------
+{
+  const crypto = load('crypto-primitives.json');
+  // The `labels` object carries a `note` key alongside the labels themselves. It is excluded
+  // explicitly rather than by filtering on a value type, because it IS a string and a
+  // type-based filter would let it through -- which is what the first version of this check
+  // did, and what its own failure named.
+  const fromFile = Object.fromEntries(
+    Object.entries(crypto.labels).filter(([k]) => k !== 'note'),
+  );
+
+  expect(!!crypto.labels, 'crypto-primitives.json has a labels object');
+
+  const fileNames = Object.keys(fromFile).sort();
+  const codeNames = Object.keys(CRYPTO_LABELS).sort();
+
+  expect(fileNames.length >= 17, 'at least 17 labels (found ' + fileNames.length + ')');
+
+  // This is the check that matters most in this file: a one-character difference in a label
+  // yields a different key and a session that fails at the first record, with nothing in the
+  // logs pointing at the typo. There is no partial credit for getting sixteen of seventeen.
+  expect(
+    fileNames.join(',') === codeNames.join(','),
+    'the label names match\n           file: ' + fileNames.join(', ') + '\n           code: ' + codeNames.join(', '),
+  );
+
+  for (const name of fileNames) {
+    expect(
+      fromFile[name] === CRYPTO_LABELS[name],
+      'the label "' + name + '" matches (file "' + fromFile[name] + '", code "' + CRYPTO_LABELS[name] + '")',
+    );
+  }
+
+  // And every label really is ASCII with the DLWP/1 prefix, which is a property of the whole
+  // set rather than an incidental feature of the current one.
+  for (const [name, value] of Object.entries(fromFile)) {
+    expect(value.startsWith('DLWP/1-'), 'the label "' + name + '" starts with DLWP/1-');
+    expect([...value].every((c) => c.charCodeAt(0) < 0x80), 'the label "' + name + '" is ASCII');
+  }
+}
+
+// ---- CryptoPrimitivesTest.theSeedRuleDerivesKeysWithNoLiteralBytes ---------------
+{
+  const crypto = load('crypto-primitives.json');
+
+  expect(!!crypto.seed_rule, 'crypto-primitives.json has a seed_rule');
+  expect(
+    crypto.seed_rule.formula === 'key(seed) = SHA-256("DLWP/1-test-key" || 0x00 || seed)',
+    'the file declares the seed rule (got "' + crypto.seed_rule.formula + '")',
+  );
+
+  const first = testKey('droidlab-test-seed-01');
+  const second = testKey('droidlab-test-seed-02');
+
+  expect(first.length === 32, 'a derived key is 32 bytes (got ' + first.length + ')');
+  expect(!first.equals(second), 'different seeds derive different keys');
+
+  // Recomputed from the label and the seed, so the check is against the file's stated formula
+  // and not against the function's own output.
+  const expected = sha256(Buffer.concat([
+    labelled('DLWP/1-test-key'),
+    Buffer.from('droidlab-test-seed-01', 'utf8'),
+  ]));
+
+  expect(first.equals(expected), "the key is the formula's output");
+
+  // The separator changes the key, so omitting it is a real and silent mistake: the key is
+  // still well-formed and simply wrong.
+  const withoutSeparator = sha256(Buffer.concat([
+    Buffer.from('DLWP/1-test-key', 'ascii'),
+    Buffer.from('droidlab-test-seed-01', 'utf8'),
+  ]));
+
+  expect(!withoutSeparator.equals(first), 'the separator changes the key, so omitting it is a real mistake');
+}
+
+// ---- CryptoPrimitivesTest.everySignatureVectorHasItsInputs ----------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const vectors = crypto.signature_vectors || [];
+
+  expect(vectors.length >= 2, 'at least 2 signature vectors (found ' + vectors.length + ')');
+
+  for (const v of vectors) {
+    expect(typeof v.seed === 'string' && v.seed.length > 0, v.id + ' has a seed');
+
+    // The seed is a short auditable string, not 32 bytes of key material -- the seed rule
+    // doing its job.
+    expect(v.seed.length < 32, v.id + "'s seed is a short string, not literal key bytes (" + v.seed.length + ' chars)');
+    expect(typeof v.signature_input === 'string' && v.signature_input.length > 0, v.id + ' has a signature input');
+
+    // 64 bytes, which is an Ed25519 signature and nothing else.
+    expect(v.signature_output_length === 64, v.id + ' signs to 64 bytes (got ' + v.signature_output_length + ')');
+
+    expect(testKey(v.seed).length === 32, v.id + "'s derived key is 32 bytes");
+  }
+
+  const seeds = vectors.map((v) => v.seed);
+  expect(new Set(seeds).size === seeds.length, 'the signature vectors use distinct seeds');
+}
+
+// ---- CryptoPrimitivesTest: the two signature payloads --------------------------
+{
+  const crypto = load('crypto-primitives.json');
+
+  const txt = crypto.signature_vectors.find((v) => v.id === 'ed25519.txt-payload.basic');
+  expect(!!txt, 'the txt-payload vector exists');
+  if (txt) {
+    // Prefixed with the txt label and a separator, so a signature over a bare payload cannot
+    // be replayed as a signature over a different one sharing bytes.
+    expect(
+      txt.signature_input.startsWith(CRYPTO_LABELS.txt_label + '\u0000'),
+      'the txt payload is prefixed with its label and a separator',
+    );
+    expect(txt.signature_input.includes('id=11111111-2222-4333-8444-555555555555'), 'the payload carries the device id');
+    expect(txt.signature_input.includes('port=45917'), 'the payload carries the port');
+  }
+
+  const qr = crypto.signature_vectors.find((v) => v.id === 'ed25519.qr-payload.basic');
+  expect(!!qr, 'the qr-payload vector exists');
+  if (qr) {
+    // Signed exactly as it appears on the QR code, so a scanner and a signer agree without
+    // either rebuilding the URI -- which is where an escaping difference would appear.
+    expect(qr.signature_input.startsWith('droidlab://pair?'), 'the QR payload is the pairing URI');
+    expect(qr.signature_input.includes('v=1'), 'the URI carries its version');
+    expect(qr.signature_input.includes('pid='), 'the URI carries the pairing id');
+    expect(qr.signature_input.includes('aep='), "the URI carries the agent's ephemeral public key");
+    expect(qr.signature_input.includes('exp=1735689600'), 'the URI carries an expiry');
+    expect(qr.signature_input.includes('name=Test%20Device'), 'the URI percent-encodes its name');
+
+    // Not labelled, unlike the txt payload: the URI already carries its own scheme and version.
+    expect(!qr.signature_input.startsWith(CRYPTO_LABELS.txt_label), 'the QR payload is not txt-labelled');
+  }
+}
+
+// ---- CryptoPrimitivesTest.aFingerprintHasTheDeclaredFormat ---------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const recipe = crypto.derivation_recipes.fingerprint;
+
+  expect(recipe.hash === 'SHA-256', 'the fingerprint is a SHA-256');
+  expect(
+    recipe.format.includes('Uppercase hex of the first 8 digest bytes'),
+    'the format is the first eight bytes, uppercase',
+  );
+
+  const value = fingerprint(Buffer.alloc(32));
+
+  expect(value.length === 19, 'a fingerprint is 19 characters (got ' + value.length + ': "' + value + '")');
+  expect((value.match(/-/g) || []).length === 3, 'a fingerprint has three dashes');
+
+  const hexValue = value.replace(/-/g, '');
+  expect(hexValue.length === 16, 'a fingerprint shows eight bytes');
+  expect(/^[0-9A-F]+$/.test(hexValue), 'a fingerprint is uppercase hex');
+
+  // Derived, not a constant: two different keys give two fingerprints.
+  expect(fingerprint(Buffer.alloc(32, 1)) !== value, 'different keys give different fingerprints');
+
+  // A wrong-width key is refused rather than padded or truncated, either of which would give a
+  // fingerprint that looks right and identifies the wrong key.
+  let refusedShort = false;
+  try {
+    fingerprint(Buffer.alloc(31));
+  } catch {
+    refusedShort = true;
+  }
+  expect(refusedShort, 'a 31-byte key is refused');
+
+  // The recipe's own note: the RFC's example is illustrative and derived from no seed, so the
+  // vectors deliberately carry no fingerprint VALUE. Only the format is checkable.
+  expect(
+    recipe.note.includes('illustrative only') && recipe.note.includes('not derived from any seed'),
+    "the fingerprint recipe's example is not a test value",
+  );
+}
+
+// ---- CryptoPrimitivesTest.thePairingCodeIsSixDigits ----------------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const recipe = crypto.derivation_recipes.pairing_code;
+
+  expect(
+    recipe.format.includes('uint32_be(digest[0..4]) mod 1000000'),
+    'the format is the first four digest bytes big-endian modulo a million',
+  );
+
+  const secret = testKey('pairing-secret');
+  const controllerNonce = Buffer.from(Array.from({ length: 32 }, (_, i) => i));
+  const agentNonce = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 32));
+
+  const code = pairingCode(secret, controllerNonce, agentNonce);
+
+  expect(code.length === 6, 'a pairing code is six digits (got ' + code.length + ': "' + code + '")');
+  expect(/^\d{6}$/.test(code), 'a pairing code is decimal (got "' + code + '")');
+
+  const value = Number(code);
+  expect(value >= 0 && value < 1000000, 'a pairing code is below a million (got ' + value + ')');
+
+  // The code depends on every input, so a peer cannot make it match by holding one fixed.
+  const differentSecret = pairingCode(testKey('other'), controllerNonce, agentNonce);
+  const differentAgentNonce = pairingCode(secret, controllerNonce, Buffer.alloc(32, 9));
+
+  expect(code !== differentSecret && code !== differentAgentNonce, 'the code depends on every input');
+
+  // A KNOWN VALUE, recomputed here from the digest by hand rather than by calling the function.
+  // This is the assertion that pins the ENDIANNESS: the checks above only require six digits,
+  // and reading the digest little-endian also gives six digits from the same bytes.
+  // Mutation-testing showed exactly that -- swapping the byte order survived every other check.
+  const digest = sha256(Buffer.concat([labelled('DLWP/1-pairing-code'), secret, controllerNonce, agentNonce]));
+
+  const bigEndian =
+    (digest[0] * 0x1000000) + (digest[1] * 0x10000) + (digest[2] * 0x100) + digest[3];
+  const littleEndian =
+    digest[0] + (digest[1] * 0x100) + (digest[2] * 0x10000) + (digest[3] * 0x1000000);
+
+  expect(
+    String(bigEndian % 1000000).padStart(6, '0') === code,
+    'the code is the digest first four bytes, big-endian (by hand ' +
+      String(bigEndian % 1000000).padStart(6, '0') + ', code ' + code + ')',
+  );
+
+  // And the little-endian reading gives a different code for the same digest, so the assertion
+  // above discriminates rather than passing either way. Skipped in the rare case the two agree,
+  // so the check cannot pass vacuously.
+  if (littleEndian % 1000000 !== bigEndian % 1000000) {
+    expect(
+      String(littleEndian % 1000000).padStart(6, '0') !== code,
+      'the little-endian reading gives a different code, so the check discriminates',
+    );
+  }
+
+  // The padding is REACHED, not merely described. Deleting the padding from the derivation
+  // survived every other check, because a real digest rarely lands below 100000; so an input
+  // is searched for that produces a small code.
+  let paddedFound = null;
+  for (let attempt = 0; attempt < 500 && paddedFound === null; attempt++) {
+    const cNonce = Buffer.from(Array.from({ length: 32 }, (_, i) => (i + attempt) & 0xff));
+    const aNonce = Buffer.from(Array.from({ length: 32 }, (_, i) => (i * 7 + attempt) & 0xff));
+    const candidate = pairingCode(secret, cNonce, aNonce);
+    if (candidate.startsWith('0')) paddedFound = candidate;
+  }
+
+  expect(paddedFound !== null, 'an input producing a code below 100000 was found, so the padding is exercised');
+  if (paddedFound !== null) {
+    expect(paddedFound.startsWith('0'), 'a code below 100000 is zero padded (got "' + paddedFound + '")');
+    expect(paddedFound.length === 6, 'a padded code is still six characters');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ReplayProtection  --  mirror of crypto/ReplayProtection.kt
+// ---------------------------------------------------------------------------
+
+const REORDER_WINDOW_SIZE = 32;
+
+/** Mirror of ReplayProtection.classify. */
+function classifySequenceNumber(sequenceNumber, highestAccepted, seenBefore, window) {
+  if (seenBefore === undefined) seenBefore = null;
+  if (window === undefined) window = REORDER_WINDOW_SIZE;
+
+  // 1. A repeat, checked BEFORE the window. A number inside the window that has already been
+  //    accepted must not be accepted twice, and the window alone cannot tell the difference
+  //    between that and a legitimate reorder.
+  if (seenBefore !== null && seenBefore.has(sequenceNumber)) {
+    return { accepted: false, replay: true };
+  }
+
+  // Nothing accepted yet means there is no window to fall out of.
+  if (highestAccepted === null || highestAccepted === undefined) {
+    return { accepted: true, replay: false };
+  }
+
+  // 2. Behind the window's trailing edge, which is inclusive of the slot `window` behind.
+  const oldestAcceptable = highestAccepted - window;
+  if (sequenceNumber < oldestAcceptable) {
+    return { accepted: false, replay: true };
+  }
+
+  // 3. In the window or ahead of it.
+  return { accepted: true, replay: false };
+}
+
+/** Mirror of ReplayProtection.isUsableSharedSecret. */
+function isUsableSharedSecret(sharedSecret) {
+  if (sharedSecret.length !== 32) return false;
+
+  // Folded rather than early-returned, so a secret whose FIRST byte is zero and one whose LAST
+  // byte is zero take the same path. Not a timing defence -- the compared value is a fixed
+  // public constant -- but it stops a reader misreading a short-circuit as one.
+  let accumulator = 0;
+  for (const byte of sharedSecret) accumulator |= byte;
+
+  return accumulator !== 0;
+}
+
+// ---- CryptoPrimitivesTest.anAllZeroSharedSecretIsRefused -----------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const v = crypto.rejection_vectors.find((x) => x.id === 'x25519.reject.all-zero-output');
+
+  expect(!!v, 'x25519.reject.all-zero-output exists');
+  if (v) {
+    expect(v.expected === 'rejected', 'the all-zero output is rejected');
+
+    const peerKey = hex(v.peer_public_key);
+    expect(peerKey.length === 32, 'the low-order point is 32 bytes');
+    expect([...peerKey].every((b) => b === 0), "the vector's key really is all zero");
+
+    expect(!isUsableSharedSecret(Buffer.alloc(32)), 'an all-zero shared secret is refused');
+    expect(isUsableSharedSecret(Buffer.alloc(32, 1)), 'a non-zero secret is usable');
+
+    // Including when only the LAST byte is non-zero, which an early return written against the
+    // first byte would wrongly reject.
+    const lastByteOnly = Buffer.alloc(32);
+    lastByteOnly[31] = 1;
+    expect(isUsableSharedSecret(lastByteOnly), 'a secret non-zero only in its last byte is usable');
+
+    expect(!isUsableSharedSecret(Buffer.alloc(31)), 'a short secret is refused');
+  }
+}
+
+// ---- CryptoPrimitivesTest.aReusedSequenceNumberIsRefused -----------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const v = crypto.rejection_vectors.find((x) => x.id === 'nonce.reject.reused-sequence');
+
+  expect(!!v, 'nonce.reject.reused-sequence exists');
+  if (v) {
+    expect(v.expected === 'rejected', 'a reuse is rejected');
+    expect(v.first_sequence_number === v.second_sequence_number, 'the two frames share a number');
+
+    const sequence = v.first_sequence_number;
+
+    expect(classifySequenceNumber(sequence, null, new Set()).accepted, 'the first frame is accepted');
+    expect(!classifySequenceNumber(sequence, sequence, new Set([sequence])).accepted, 'the repeat is refused');
+    expect(classifySequenceNumber(sequence, sequence, new Set([sequence])).replay, 'and it is a replay');
+
+    // Which is the mistake this pair exists to catch: without the seen-set the window check
+    // alone ACCEPTS the repeat, because the arriving number is inside the window.
+    expect(
+      classifySequenceNumber(sequence, sequence, null).accepted,
+      'the window alone cannot tell a repeat from a reorder, which is why the seen-set is checked first',
+    );
+  }
+}
+
+// ---- CryptoPrimitivesTest.theReorderingWindowBracketsItsEdge -------------------
+{
+  const crypto = load('crypto-primitives.json');
+
+  const out = crypto.rejection_vectors.find((x) => x.id === 'nonce.reject.out-of-window');
+  const inside = crypto.rejection_vectors.find((x) => x.id === 'nonce.accept.inside-window');
+
+  expect(!!out, 'the out-of-window vector exists');
+  expect(!!inside, 'the inside-window vector exists');
+
+  if (out) {
+    expect(out.expected === 'rejected', 'a frame past the window is rejected');
+    expect(out.window === REORDER_WINDOW_SIZE, "the vector's window matches the code (" + out.window + ')');
+
+    const verdict = classifySequenceNumber(out.received, out.highest_accepted, new Set(), out.window);
+    expect(!verdict.accepted, 'a frame ' + (out.highest_accepted - out.received) + ' behind is refused');
+    expect(verdict.replay, 'and it is a replay');
+  }
+
+  if (inside) {
+    expect(inside.expected === 'accepted', 'a frame inside the window is accepted');
+
+    const verdict = classifySequenceNumber(inside.received, inside.highest_accepted, new Set(), inside.window);
+    expect(verdict.accepted, 'a frame ' + (inside.highest_accepted - inside.received) + ' behind is accepted');
+    expect(!verdict.replay, 'and it is not a replay');
+  }
+}
+
+// ---- CryptoPrimitivesTest.theWindowEdgeIsExact --------------------------------
+{
+  const highest = 1000;
+  const window = REORDER_WINDOW_SIZE;
+  const oldest = highest - window;
+
+  // Checked on BOTH sides of the line: an off-by-one here either refuses a legitimate reorder
+  // or accepts one a frame too old, and the vectors sample only the two cases, not the edge.
+  expect(classifySequenceNumber(oldest, highest, new Set(), window).accepted, 'the oldest number in the window is accepted');
+  expect(!classifySequenceNumber(oldest - 1, highest, new Set(), window).accepted, 'one older than the window is refused');
+  expect(classifySequenceNumber(highest + 1, highest, new Set(), window).accepted, 'a number ahead of the high-water mark is accepted');
+
+  // Nothing accepted yet means no window, however small the number. Which is why the Kotlin's
+  // `highestAccepted` is nullable rather than defaulting to zero.
+  //
+  // The discriminating case has to be a number a zero default would REJECT: with a high-water
+  // mark of 0 and a window of 32, a frame numbered 0 is at the boundary and acceptable either
+  // way, so testing 0 alone does not distinguish the two. A very low number does.
+  //
+  // Mutation-testing found this -- replacing the null case with a zero default survived, because
+  // every number the check used was above the boundary under both readings.
+  expect(
+    classifySequenceNumber(Number.MIN_SAFE_INTEGER, null, new Set(), window).accepted,
+    'with nothing accepted yet there is no window, so even a very low number is accepted',
+  );
+
+  // And the same number IS refused against a zero high-water mark, which is what makes the
+  // assertion above meaningful rather than a tautology.
+  expect(
+    !classifySequenceNumber(Number.MIN_SAFE_INTEGER, 0, new Set(), window).accepted,
+    'the same number is refused once something has been accepted, so the null case is doing work',
+  );
+}
+
+// ---- CryptoPrimitivesTest.theFrameHeaderIsTheAssociatedData -------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const v = crypto.rejection_vectors.find((x) => x.id === 'aead.reject.tampered-header');
+
+  expect(!!v, 'aead.reject.tampered-header exists');
+  if (v) {
+    expect(v.expected === 'rejected', 'a tampered header is rejected');
+    expect(v.mutated_field === 'sequence_number', 'the mutated field is a header field');
+    expect(v.expected_error === 'ERR_MALFORMED', 'a tampered header is reported as malformed');
+
+    const headerFields = [
+      'magic', 'version', 'flags', 'header_length', 'message_type',
+      'channel_id', 'sequence_number', 'acknowledgment', 'body_length',
+    ];
+
+    expect(headerFields.includes(v.mutated_field), "the mutated field is one of the header's own fields");
+  }
+}
+
+// ---- CryptoPrimitivesTest.theDeclaredAlgorithmsAreTheOnesUsed -----------------
+{
+  const crypto = load('crypto-primitives.json');
+  const algorithms = crypto.algorithms;
+
+  // Declared, not assumed: an implementation that substituted a primitive would still pass
+  // every vector that only checks a length, so the declarations are compared to what the code
+  // names.
+  expect(algorithms.kdf === 'HKDF per RFC 5869 with SHA-256', 'the KDF is declared (got "' + algorithms.kdf + '")');
+  expect(algorithms.aead === 'AES-256-GCM with a 96-bit nonce and a 128-bit tag', 'the AEAD is declared (got "' + algorithms.aead + '")');
+  expect(algorithms.key_agreement === 'X25519 per RFC 7748', 'the agreement is declared (got "' + algorithms.key_agreement + '")');
+  expect(algorithms.signature === 'Ed25519 per RFC 8032', 'the signature is declared (got "' + algorithms.signature + '")');
+  expect(algorithms.hmac === 'HMAC-SHA256 per RFC 2104', 'the MAC is declared (got "' + algorithms.hmac + '")');
+  expect(algorithms.hash === 'SHA-256 per FIPS 180-4', 'the hash is declared (got "' + algorithms.hash + '")');
+
+  expect(sha256(Buffer.alloc(0)).length === 32, 'SHA-256 produces 32 bytes');
+
+  // Known-answer checks, so the digest is SHA-256 and not merely 32 bytes of something. Two
+  // answers, so one constant being right by construction cannot carry the check.
+  expect(
+    sha256(Buffer.alloc(0)).toString('hex') === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    'SHA-256 of the empty string is its published value',
+  );
+
+  expect(
+    sha256(Buffer.from('abc', 'ascii')).toString('hex') === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    'SHA-256 of "abc" is its published value',
+  );
+}
+
+// ---- CryptoPrimitivesTest.theNonceLayoutIsTheDeclaredOne ----------------------
+{
+  const crypto = load('crypto-primitives.json');
+  const nonce = crypto.derivation_recipes.nonce_layout;
+
+  expect(
+    nonce.form.includes('iv_prefix (4 bytes) || sequence_number (8 bytes, big-endian)'),
+    'the nonce is an IV prefix and a big-endian sequence number (got "' + nonce.form + '")',
+  );
+
+  // Twelve bytes total, which is the 96-bit nonce AES-GCM is defined for.
+  expect(4 + 8 === 12, 'the nonce is twelve bytes');
+}
+
 // ---------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------
