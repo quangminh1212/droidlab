@@ -79,7 +79,16 @@ pub enum Severity {
 }
 
 impl ErrorCode {
-    /// Every code, in registry order, for cross-checking against `dlwp-1.json`.
+    /// Every code, in this crate's own order, for cross-checking against `dlwp-1.json`.
+    ///
+    /// The order here is the same as the registry's `error_codes` array, which is grouped
+    /// thematically — the unsupported codes first, then framing, then handshake and auth, and so on.
+    ///
+    /// **The discriminants are private to this crate.** The registry's error-code entries carry only
+    /// `code` and `severity`; unlike `message_types`, which have `"code": 1`, they have no numeric
+    /// field. An error code is identified on the wire only by its name, so the `#[repr(u8)]` values
+    /// exist for `ALL`'s benefit and nothing else. `the_registry_assigns_no_numbers_to_error_codes`
+    /// in the conformance suite asserts that the registry still assigns none.
     pub const ALL: [Self; 22] = [
         Self::UnsupportedHeader,
         Self::FrameTooLarge,

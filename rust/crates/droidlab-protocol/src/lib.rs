@@ -63,9 +63,11 @@
 pub mod cbor;
 pub mod error;
 pub mod frame_header;
+pub mod limits;
 
 pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
 pub use error::{ErrorCode, FrameError, Severity};
 pub use frame_header::{
     FrameFlag, FrameHeader, DEFINED_FLAGS, FIXED_LENGTH, MAGIC, PROTOCOL_VERSION, RESERVED_FLAGS,
 };
+pub use limits::Limits;
