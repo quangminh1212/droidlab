@@ -2,7 +2,7 @@
 
 | Field | Value |
 | ----- | ----- |
-| Status | Accepted |
+| Status | Accepted, **amended by [ADR-0009](ADR-0009-rust-tauri-controller.md)** |
 | Date | 2025-01-02 |
 | Deciders | DroidLab maintainers |
 | Related | ADR-0002, ADR-0007 |
@@ -36,6 +36,18 @@ in this repository may claim that it has.
 > not. See `docs/findings/kotlin-never-compiled.md` and `docs/findings/kotlin-suite-ten-failures.md`.
 >
 > The transferable lesson is in the last bullet of the consequences.
+>
+> **Amendment (2026-10-09, by [ADR-0009](ADR-0009-rust-tauri-controller.md)).** This ADR called Rust
+> the *reference* core and said explicitly that it did not make C# or Kotlin second-class. ADR-0009
+> goes further than this ADR did: Rust is now also the **product language for the Windows
+> controller**, which links `droidlab-protocol` directly rather than reimplementing DLWP/1 beside it.
+>
+> What does not change is the part of this ADR that matters most under ADR-0007: "reference" still
+> means only "the implementation the others are read against", and it still confers no authority.
+> The vectors remain the sole interop contract, the C# codec remains a third independent
+> implementation checking the other two, and no implementation may be treated as correct because it
+> is the one that ships. A shipping implementation with no sibling to disagree with it would be a
+> weaker position, not a stronger one.
 
 The response so far was the Kotlin mirror: `protocol/tools/check-kotlin-vectors.cjs` ports the Kotlin's
 arithmetic to JavaScript and runs it against the real vector files. It is a genuine technique and it has

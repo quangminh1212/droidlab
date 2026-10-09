@@ -84,15 +84,15 @@ leaves the machine is what you explicitly send.
         │                    Windows workstation                      │
         │                                                             │
         │   ┌─────────────────────────────────────────────────────┐   │
-        │   │  DroidLab Controller  (DroidLab.App, WPF)           │   │
+        │   │  DroidLab Controller  (Rust + Tauri, ADR-0009)      │   │
         │   │    mirror view · input · shell · files · logs       │   │
         │   └───────────┬─────────────────────────┬───────────────┘   │
         │               │                         │                   │
         │   ┌───────────▼───────────┐ ┌───────────▼───────────────┐   │
-        │   │ DroidLab.Protocol     │ │ DroidLab.Adb              │   │
+        │   │ droidlab-protocol     │ │ ADB client                │   │
         │   │ DLWP/1 codec, crypto  │ │ drives the local adb      │   │
-        │   └───────────┬───────────┘ │ server (adb pair/connect) │   │
-        │               │             └───────────┬───────────────┘   │
+        │   │ linked, not re-impl'd │ │ server (adb pair/connect) │   │
+        │   └───────────┬───────────┘ └───────────┬───────────────┘   │
         └───────────────┼─────────────────────────┼───────────────────┘
                         │                         │
                         │  DLWP/1 over TCP        │  ADB wire protocol
@@ -295,15 +295,21 @@ npm run check:all
 cd android
 .\gradlew :app:assembleRelease
 
-# Windows controller  ->  windows/DroidLab.App/bin/Release/net8.0-windows/DroidLab.App.exe
-cd ..\windows
-dotnet publish DroidLab.App -c Release
+# Windows controller  ->  rust/controller/src-tauri/target/release/droidlab-controller.exe
+cd ..\rust\controller
+cargo tauri build --release
 ```
 
-> The protocol core builds today; the two applications do not yet exist. `droidlab/app` and
-> `DroidLab.App` are M2–M4 work, and the commands above are the shape they will have rather than
-> commands that run now. The one command that does build something you can run is
+> The protocol core builds today; the two applications do not yet exist. `android/app` and
+> `rust/controller` are M2–M6 work, and the commands above are the shape they will have rather
+> than commands that run now. The one command that does build something you can run is
 > `npm run check:all`.
+>
+> The controller's stack was measured before it was chosen, not assumed: a throwaway Tauri spike
+> built here in 1 min 05 s to an 8.13 MB binary with a 27.2 MB working set and a working
+> JavaScript-to-Rust `invoke` round trip. See
+> [ADR-0009](docs/adr/ADR-0009-rust-tauri-controller.md) for the measurements and the risk they
+> leave open — video decode through a webview is not yet proven and is M3's first task.
 
 The Kotlin protocol core is a plain JVM module with no Android dependency, so it builds with a
 JDK and the checked-in Gradle wrapper and nothing else:
@@ -339,8 +345,10 @@ Installation, in order:
 
 To install:
 
-1. Run `DroidLab.App.exe`. It is a normal desktop application and does not
-   require elevation.
+1. Run `droidlab-controller.exe`. It is a normal desktop application and does not
+   require elevation. It uses the WebView2 runtime, which ships with Windows 10
+   21H2 and later; an older machine needs the Evergreen WebView2 Runtime, which
+   the installer bundles.
 2. The first launch opens the device list and waits for an agent to appear.
 
 ---
@@ -488,7 +496,7 @@ that no input can distinguish from its absence is one that will silently stop wo
 the comparison changes.
 
 **6. README consistency check** — reads the numbers out of this file and fails if they
-no longer match the run (47 checks):
+no longer match the run (48 checks):
 
 ```text
 ok    checks passed = 84 (README and the run agree)
@@ -496,7 +504,7 @@ ok    checks failed = 0 (README and the run agree)
 ok    warnings = 0 (README and the run agree)
 ok    error codes = 22 (registry and README agree)
 
-All 47 README checks passed.
+All 48 README checks passed.
 ```
 
 **7. Kotlin protocol core** — compiled and tested on every commit, which it was not before. This
@@ -636,13 +644,16 @@ droidlab/
 │   ├── schema/              JSON Schema for every DLWP/1 frame
 │   ├── vectors/             Conformance vectors (the interop contract)
 │   └── tools/               Registry drift checker, vector verifier
-├── rust/                    Rust reference core (ADR-0008)
+├── rust/                    Rust protocol core (ADR-0008)
 │   └── crates/
 │       └── droidlab-protocol/  DLWP/1 codec, cbOR, limits, wire efficiency  ← builds & tests
+├── rust/controller/         Windows controller — the EXE (ADR-0009)
+│   ├── src-tauri/           Session manager, ADB client, Tauri commands
+│   └── ui/                  WebView2 UI (TypeScript + HTML)
 ├── android/                 Android agent — the APK
 │   └── core-protocol/       DLWP/1 codec (mirrors DroidLab.Protocol)        ← builds & tests
-├── windows/                 Windows controller — the EXE
-│   ├── DroidLab.Protocol/   DLWP/1 codec, crypto, session state             ← builds & tests
+├── windows/                 Conformance oracle, NOT the controller (ADR-0009)
+│   ├── DroidLab.Protocol/   Second independent DLWP/1 codec                 ← builds & tests
 │   └── DroidLab.Tests/      xUnit suite (583 tests)                         ← builds & tests
 ├── docs/findings/           Defects found in the fixtures and the specs
 ├── scripts/                 Build and release automation
@@ -657,13 +668,18 @@ respect them is written. Nothing is claimed to exist that does not.
 Each of the three codecs is compiled and tested on every commit, which is what M1's completion
 rests on.
 
-The `rust/crates/droidlab-protocol`, `android/core-protocol` and `windows/DroidLab.Protocol`
-codecs are **siblings, not shared libraries**. They must not reference each other; the
-vectors are what keeps them honest. Dependency rules R1–R7 are specified in
+The `droidlab-protocol` (Rust), `android/core-protocol` (Kotlin) and `windows/DroidLab.Protocol`
+(C#) codecs are **siblings, not shared libraries**. They must not reference each other; the
+vectors are what keeps them honest. Dependency rules R1–R8 are specified in
 [docs/architecture/REPOSITORY.md](docs/architecture/REPOSITORY.md) and enforced in review.
-Rust is the **reference core** in the sense ADR-0008 defines — the one that compiles and runs
-here, so a disagreement starts its investigation there — which is not the same as being
-authoritative over the other two.
+Rust is the **reference core** in the sense ADR-0008 defines — the one whose disagreement starts
+an investigation — which is not the same as being authoritative over the other two, and
+ADR-0009 reaffirms that even though Rust now also ships as the controller.
+
+The C# codec's status changed with ADR-0009: it is no longer the controller's protocol code and
+is no longer built into the product. It is kept, and kept building, as a **second conformance
+oracle** — an independent implementation that can still disagree with the Rust core, which is
+worth more than a tidier directory. Its 583 tests are why it stays.
 
 After a lesson learned the hard way, the vectors are also treated as **code under review**.
 Finding that four of six `framing-basic.json` bodies are not valid cbOR, after two

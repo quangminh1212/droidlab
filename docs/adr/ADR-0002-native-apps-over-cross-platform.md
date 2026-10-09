@@ -2,9 +2,23 @@
 
 | Field | Value |
 | ----- | ----- |
-| Status | Accepted |
+| Status | **Superseded in part by [ADR-0009](ADR-0009-rust-tauri-controller.md)** |
 | Date | 2025-01-01 |
 | Deciders | DroidLab maintainers |
+
+> **Status note (2026-10-09).** This ADR decided two things: the Android agent is native Kotlin,
+> and the Windows controller is native C#/WPF. The first stands, and ADR-0009 reaffirms it —
+> including the reasoning below about not shipping a cross-platform runtime to the phone.
+>
+> The second does not. ADR-0009 moves the Windows controller to **Rust + Tauri**, on the grounds
+> that the Rust core now covers more of DLWP/1 than the C# codec does and that linking it
+> directly avoids a third reimplementation of the protocol in a process that has to agree with
+> the other two byte for byte. The C# codec is kept as a conformance oracle rather than deleted.
+>
+> The argument below is left unedited, because an ADR records the decision and the reasoning of
+> its time. The sentence "every millisecond of buffering and every OEM-specific quirk matters" is
+> still the sharpest objection to ADR-0009, and ADR-0009 accepts it explicitly as the risk that
+> must be retired in M3 before the new stack can be called proven.
 
 ## Context
 

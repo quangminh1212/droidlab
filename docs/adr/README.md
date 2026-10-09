@@ -11,13 +11,14 @@ before any third-party dependency is added to protocol or session layers.
 | ADR | Title | Status |
 | --- | ----- | ------ |
 | [0001](ADR-0001-record-architecture-decisions.md) | Record architecture decisions | Accepted |
-| [0002](ADR-0002-native-apps-over-cross-platform.md) | Native apps instead of a cross-platform stack | Accepted |
+| [0002](ADR-0002-native-apps-over-cross-platform.md) | Native apps instead of a cross-platform stack | **Superseded in part by ADR-0009** — the Android half stands, the C# controller half does not |
 | [0003](ADR-0003-cbor-over-json.md) | cbOR over JSON for control frames | Accepted |
 | [0004](ADR-0004-custom-security-layer-over-tls.md) | A purpose-built security layer instead of TLS | Accepted |
 | [0005](ADR-0005-scrcpy-compatible-video-path.md) | Reuse the scrcpy-compatible H.264 path for video | Accepted |
 | [0006](ADR-0006-adb-over-wifi-instead-of-adbd-bridge.md) | Drive wireless debugging through the platform ADB server | Accepted |
 | [0007](ADR-0007-conformance-vectors-as-the-interop-contract.md) | Conformance vectors are the interoperability contract | Accepted |
-| [0008](ADR-0008-rust-as-the-reference-core.md) | Rust is the reference core, and C# and Kotlin are siblings | Accepted |
+| [0008](ADR-0008-rust-as-the-reference-core.md) | Rust is the reference core, and C# and Kotlin are siblings | Accepted, **amended by ADR-0009** — Rust is also the controller's product language |
+| [0009](ADR-0009-rust-tauri-controller.md) | The Windows controller is Rust and Tauri, and the C# codec becomes a fixture | Accepted |
 
 ## Template
 
