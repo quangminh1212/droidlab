@@ -63,7 +63,11 @@
 pub mod cbor;
 pub mod error;
 pub mod frame_header;
+pub mod keyschedule;
+pub mod labels;
 pub mod limits;
+pub mod seed;
+pub mod transcript;
 pub mod wire;
 
 pub use cbor::{CborError, CborErrorKind, MajorType, Value, MAX_DEPTH};
@@ -71,7 +75,21 @@ pub use error::{ErrorCode, FrameError, Severity};
 pub use frame_header::{
     FrameFlag, FrameHeader, DEFINED_FLAGS, FIXED_LENGTH, MAGIC, PROTOCOL_VERSION, RESERVED_FLAGS,
 };
+pub use keyschedule::{
+    aad_from_header, build_nonce, constant_time_eq, derive_session_keys, hmac_labeled, hmac_sha256,
+    open, seal, session_ikm, session_salt, sha256, sha256_labeled, Direction, KeyScheduleError,
+    RecordError, SessionKeys, EXPORTER_LENGTH, IV_PREFIX_LENGTH, KEY_LENGTH, NONCE_LENGTH,
+    SEQUENCE_LENGTH, TAG_LENGTH,
+};
 pub use limits::Limits;
+pub use seed::{
+    from_base64url, from_hex, key_from_hex, key_from_seed, seed_hex, to_base64url, to_hex,
+    Base64Error, HexError, SEED_PREFIX,
+};
+pub use transcript::{
+    Transcript, TranscriptError, FIXED_WIDTH_TOTAL, LABEL_LENGTH, LENGTH_PREFIX_LENGTH,
+    SEPARATOR_LENGTH,
+};
 pub use wire::{
     enables_compression, should_compress, wire_size, wire_size_compressed, CompressionDecision,
     FrameView, FrameViewError, HeaderTemplate, TemplateError, COMPRESSION_DENOMINATOR,
