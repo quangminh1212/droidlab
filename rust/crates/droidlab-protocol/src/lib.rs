@@ -66,6 +66,7 @@ pub mod frame_header;
 pub mod keyschedule;
 pub mod labels;
 pub mod limits;
+pub mod pairing;
 pub mod seed;
 pub mod transcript;
 pub mod wire;
@@ -82,6 +83,12 @@ pub use keyschedule::{
     SEQUENCE_LENGTH, TAG_LENGTH,
 };
 pub use limits::Limits;
+pub use pairing::{
+    derive_pairing_secret, ed25519_public_key_with_seed, pairing_code, pairing_salt,
+    sign_ed25519_with_seed, verify_ed25519, verify_proof, x25519_shared, AuthProofs, Fingerprint,
+    FingerprintError, PairingError, PairingSecret, FINGERPRINT_BYTES, FINGERPRINT_RENDERED,
+    PAIRING_CODE_DIGITS, PAIRING_CODE_MODULUS, PAIRING_SECRET_LENGTH, PROOF_LENGTH,
+};
 pub use seed::{
     from_base64url, from_hex, key_from_hex, key_from_seed, seed_hex, to_base64url, to_hex,
     Base64Error, HexError, SEED_PREFIX,
