@@ -65,7 +65,7 @@ wire format is incomplete — and fails CI — until:
 
 * Hand-authored hex is tedious and error-prone. Mitigated by
   `protocol/tools/` generators that produce candidate vectors from a description
-  and by the vector linter (`npm run test:protocol`), which checks internal
+  and by the vector linter (`pnpm run test:protocol`), which checks internal
   consistency (lengths match, digests recompute, error codes exist in the
   registry).
 * Vectors must be maintained in lockstep with the RFC. The CI gate makes this

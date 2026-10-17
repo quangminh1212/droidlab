@@ -135,6 +135,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -143,13 +145,13 @@ jobs:
         with:
           dotnet-version: "8.0.x"
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
       # The registry, the vectors, the generated files, the Kotlin mirror, the mutation check and
       # the README's own numbers. One command, so a contributor and CI cannot disagree about what
       # "green" means.
       - name: Every gate
-        run: npm run check
+        run: pnpm run check
 
   markdown:
     name: Markdown lint
@@ -157,10 +159,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - run: npm ci
+      - run: pnpm install --frozen-lockfile
 
-      - run: npx markdownlint-cli2 "**/*.md"
+      - run: pnpm dlx markdownlint-cli2 "**/*.md"

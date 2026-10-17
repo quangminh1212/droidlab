@@ -7,7 +7,7 @@
 //
 // So the arithmetic and the fixture assumptions of the Kotlin tests are ported here and
 // run against the same files under protocol/vectors/. This is a real gate: it runs in
-// `npm run check`, so a vector that moves out from under the Kotlin test fails here even
+// `pnpm run check`, so a vector that moves out from under the Kotlin test fails here even
 // though the Kotlin test cannot itself be executed.
 //
 // WHAT THIS IS NOT
@@ -1034,7 +1034,7 @@ function transcriptLength(clientId, agentId) {
 }
 
 // ---- a minimal SHA-256, so the mirror does not need a dependency -----------------
-// Written out because this project's checkers are dependency-free by policy: `npm ci`
+// Written out because this project's checkers are dependency-free by policy: `pnpm install --frozen-lockfile`
 // installs nothing, and adding a hash library to verify a hash would be circular.
 const SHA256_K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -4789,7 +4789,7 @@ console.log('ok    all 22 malformed vectors and all 3 sequence vectors classify 
 console.log('');
 console.log('NOTE  This validates the Kotlin logic, NOT that the Kotlin compiles.');
 console.log('      This mirror is one of TWO Kotlin checks and is not the stronger one.');
-console.log('      `npm run check:kotlin-build` compiles and tests android/core-protocol');
+console.log('      `pnpm run check:kotlin-build` compiles and tests android/core-protocol');
 console.log('      for real, and CI runs it. Keep both: this one checks arithmetic the');
 console.log('      compiler does not, and it keeps working when the module does not build.');
 console.log('');

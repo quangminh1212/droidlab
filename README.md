@@ -283,11 +283,11 @@ git clone https://github.com/quangminh1212/droidlab.git
 cd droidlab
 
 # Protocol checks — no toolchain beyond Node.js required
-npm ci
-npm run check
+pnpm install --frozen-lockfile
+pnpm run check
 
 # Everything, including the compiled Kotlin core (needs JDK 17)
-npm run check:all
+pnpm run check:all
 ```
 
 ```powershell
@@ -303,7 +303,7 @@ cargo tauri build --release
 > The protocol core builds today; the two applications do not yet exist. `android/app` and
 > `rust/controller` are M2–M6 work, and the commands above are the shape they will have rather
 > than commands that run now. The one command that does build something you can run is
-> `npm run check:all`.
+> `pnpm run check:all`.
 >
 > The controller's stack was measured before it was chosen, not assumed: a throwaway Tauri spike
 > built here in 1 min 05 s to an 8.13 MB binary with a 27.2 MB working set and a working
@@ -380,7 +380,7 @@ The protocol is the contract, so it is machine-checked. Every check runs with no
 but Node.js — no Android SDK, no .NET, no Gradle:
 
 ```bash
-npm run check
+pnpm run check
 ```
 
 **1. Registry drift check** — fails if the normative registries in RFC-0001 and
@@ -598,7 +598,7 @@ the correct instinct applied to the wrong fact, and it stayed correct while the 
   checks arithmetic the compiler does not, and it keeps working when the module does not build;
   the compiler checks a whole class of defect the mirror cannot see. Retiring either would trade
   one blind spot for another.
-- `npm run check:kotlin-build` compiles and tests the module and runs in CI. `npm run check:all`
+- `pnpm run check:kotlin-build` compiles and tests the module and runs in CI. `pnpm run check:all`
   runs it alongside the rest.
 - The rule that comes out of it: **a check for whether a thing can be built must look at the
   disk, not at an environment variable**, and "we cannot build it here" is a claim to verify
@@ -739,7 +739,7 @@ Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 The one rule that matters most: **one logical change per commit**, using
 [Conventional Commits](https://www.conventionalcommits.org/). Every commit must
-leave `npm run check` green. Changing the wire format means changing the RFC, the
+leave `pnpm run check` green. Changing the wire format means changing the RFC, the
 schema, the vectors and both codecs together — in that order.
 
 All participants are expected to follow the

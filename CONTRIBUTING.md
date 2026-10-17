@@ -67,8 +67,8 @@ git clone https://github.com/quangminh1212/droidlab.git
 cd droidlab
 
 # 1. Verify the registries, the conformance vectors and this documentation.
-#    `npm run check` needs no third-party packages; it runs on a bare Node.js.
-npm run check
+#    `pnpm run check` needs no third-party packages; it runs on a bare Node.js.
+pnpm run check
 
 # 2. Android agent
 cd android
@@ -98,7 +98,7 @@ useful than the truth allows.
 
 What this means for you, honestly:
 
-- `npm run check` works and needs nothing but Node.js. It is the only gate that runs
+- `pnpm run check` works and needs nothing but Node.js. It is the only gate that runs
   everywhere, and it is the one that protects the protocol.
 - `dotnet build` and `dotnet test` work on Windows with the .NET 8 SDK. The C# protocol
   implementation is tested and passing.
@@ -197,7 +197,7 @@ commit should be reviewable on its own, revertible on its own, and should leave
 * Do not use `git commit -a` to sweep up whatever is dirty. Stage explicitly.
 * **Do not edit a generated file by hand.** `android/core-protocol/.../ErrorCodes.kt` is
   generated from `protocol/registry/dlwp-1.json`; change the registry, run
-  `node protocol/tools/generate-kotlin-error-codes.cjs`, and commit both. `npm run check`
+  `node protocol/tools/generate-kotlin-error-codes.cjs`, and commit both. `pnpm run check`
   regenerates every generated file and fails if the committed copy differs, so an edit
   made by hand will be caught rather than silently overwriting the source of truth.
 * A pull request may contain many commits; that is expected and preferred over
@@ -211,7 +211,7 @@ Practical loop:
 ```powershell
 git add android/core-protocol/src/main/kotlin/io/droidlab/protocol/FrameCodec.kt
 git add android/core-protocol/src/test/kotlin/io/droidlab/protocol/FrameCodecTest.kt
-npm run check
+pnpm run check
 git commit -m "feat(protocol): implement DLWP/1 frame encoding" -m "Encodes the 24-byte header and a cbOR body, and pins the layout against protocol/vectors/framing-basic.json so the Kotlin and C# codecs cannot drift."
 ```
 
@@ -280,7 +280,7 @@ Formatting is automated; do not argue about it in review.
 | -------- | ---- | ------- |
 | Kotlin | `ktlint` via the Gradle plugin | `./gradlew ktlintFormat` |
 | C# | `dotnet format` | `dotnet format DroidLab.sln` |
-| Markdown | `markdownlint-cli2` | `npm run lint:md` |
+| Markdown | `markdownlint-cli2` | `pnpm run lint:md` |
 | Everything | `.editorconfig` | handled by your editor |
 
 Naming and structure conventions are in

@@ -15,9 +15,9 @@
 //                       Catches a wrong rule even when nothing compiles.
 //   check:kotlin-build  compiles and runs the actual Kotlin. Catches everything else.
 //
-// This one is not in `npm run check`, because it needs a JDK and a Gradle download and
-// `npm run check` is documented as running with Node alone. It runs in CI, and
-// `npm run check:all` runs both locally.
+// This one is not in `pnpm run check`, because it needs a JDK and a Gradle download and
+// `pnpm run check` is documented as running with Node alone. It runs in CI, and
+// `pnpm run check:all` runs both locally.
 //
 // Usage:
 //   node protocol/tools/check-kotlin-build.cjs           # compile + test
@@ -114,7 +114,7 @@ function main() {
         console.log('');
         console.log('NOTE  Compiling is evidence that the code exists and runs. It is not evidence');
         console.log('      that its rules agree with the Rust core or the C# codec -- the vectors');
-        console.log('      are that evidence, and `npm run check:kotlin` is where they are applied.');
+        console.log('      are that evidence, and `pnpm run check:kotlin` is where they are applied.');
     }
 }
 

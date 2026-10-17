@@ -42,7 +42,7 @@ hex, and what must happen when it is wrong. Both must change together:
 
 ```powershell
 # Fails if a schema or RFC changed without a matching vector change
-npm run test:protocol
+pnpm run test:protocol
 ```
 
 ## Validating by hand

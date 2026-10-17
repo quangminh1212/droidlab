@@ -43,8 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   committed Gradle wrapper, with no Android SDK needed. See
   `docs/findings/kotlin-never-compiled.md` and
   `docs/findings/kotlin-suite-ten-failures.md`.
-- `npm run check:kotlin-build` and `npm run check:all` — the gate that compiles and
-  tests the Kotlin core. `npm run check` stays Node-only, as documented.
+- `pnpm run check:kotlin-build` and `pnpm run check:all` — the gate that compiles and
+  tests the Kotlin core. `pnpm run check` stays Node-only, as documented.
 
 ### Fixed
 

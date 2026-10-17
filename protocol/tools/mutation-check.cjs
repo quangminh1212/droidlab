@@ -409,7 +409,7 @@ function main() {
 
   if (!baseline.passed) {
     console.error('FAIL  the gate does not pass unmutated, so nothing here would be meaningful.');
-    console.error('      Run `npm run check:kotlin` and fix that first.');
+    console.error('      Run `pnpm run check:kotlin` and fix that first.');
     return 1;
   }
 
