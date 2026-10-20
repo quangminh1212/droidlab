@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/droidlab-protocol"]
+# The controller is a workspace member so that `cargo test --workspace` at the repository root
+# exercises it, and so that it links `droidlab-protocol` by path rather than by version. ADR-0009
+# rule R8 depends on that link being structural: the controller is supposed to use the core, not
+# re-implement it, and a path dependency in the same workspace makes the wrong thing the harder
+# thing to do.
+members = ["crates/droidlab-protocol", "controller/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
@@ -29,3 +34,6 @@ zeroize = { version = "1", default-features = false, features = ["alloc"] }
 serde_json = "1"
 hex = "0.4"
 base64 = "0.22"
+
+# The protocol core, by path. Every controller dependency on DLWP/1 goes through this line.
+droidlab-protocol = { path = "crates/droidlab-protocol" }

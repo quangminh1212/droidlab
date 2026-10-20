@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DroidLab</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <h1>DroidLab</h1>
+      <p id="identity" class="identity">starting…</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Devices</h2>
+        <!--
+          The list is empty and says so. Nothing here claims to have found a device, because
+          discovery is M2 work that does not exist yet, and a placeholder row would be the exact
+          kind of claim this project's documentation rules forbid.
+        -->
+        <p id="devices" class="empty">No devices yet — discovery is not implemented.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Session</h2>
+        <p id="session" class="empty">Not connected.</p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span id="status" class="status">—</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

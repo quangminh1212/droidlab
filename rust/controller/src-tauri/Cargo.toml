@@ -1,0 +1,55 @@
+[package]
+name = "droidlab-controller"
+description = "DroidLab controller for Windows: session manager, ADB client and Tauri commands."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# A binary, not a library. The tests live in `tests/` and drive the binary's own modules through
+# the `lib` target, so the crate is declared as both rather than duplicating the tree.
+default-run = "droidlab-controller"
+
+[lib]
+name = "droidlab_controller"
+path = "src/lib.rs"
+
+[[bin]]
+name = "droidlab-controller"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+# The protocol core, linked rather than re-implemented. ADR-0009 rule R8.
+droidlab-protocol.workspace = true
+
+tauri = { version = "2.12", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+
+# Async runtime and TCP. The transport is the first thing above the codec: it owns a socket, and
+# the codec is deliberately ignorant of sockets, so the two are separate crates for that reason.
+tokio = { version = "1", features = ["net", "io-util", "rt-multi-thread", "macros", "time", "sync"] }
+
+# Logging. `tracing` over `log` because the session manager is async and spans carry the session
+# id, which a plain `log` call cannot.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Nonces, session ids and pairing salts: OS entropy, never a userspace PRNG.
+rand = "0.8"
+
+# Timeouts and durations with a human-readable parse. `std::time` cannot parse "5s", and every
+# limit in `droidlab_protocol::Limits` is expressed as a human duration.
+humantime = "2"
+
+[dev-dependencies]
+hex.workspace = true
+base64.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"

@@ -1,0 +1,129 @@
+/* The controller's stylesheet.
+ *
+ * Plain CSS, no preprocessor and no framework. The "Windows 11" feel this aims at -- Mica-adjacent
+ * neutrals, Segoe UI Variable, 8px radii -- is about a dozen rules, and a Tailwind build step to
+ * produce a dozen rules would add a Node toolchain to a Rust project for no gain.
+ *
+ * The palette is defined once as custom properties and respects the OS light/dark setting, because
+ * a controller that ignores the system theme looks broken next to every other window on the
+ * desktop. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f3f3f3;
+  --surface: #ffffff;
+  --border: #e0e0e0;
+  --text: #1b1b1b;
+  --muted: #6b6b6b;
+  --accent: #0f6cbd;
+  --ok: #2f6f4e;
+  --bad: #b3261e;
+  --radius: 8px;
+
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202020;
+    --surface: #2b2b2b;
+    --border: #3a3a3a;
+    --text: #f0f0f0;
+    --muted: #a0a0a0;
+    --accent: #479ef5;
+    --ok: #6ccb8f;
+    --bad: #ff6b64;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* The title bar area. `-webkit-app-region: drag` is intentionally not set: the window uses the
+ * native frame, so a custom drag region would give a second, conflicting way to move it. */
+.bar {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.bar h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.identity {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 16px 20px;
+  align-content: start;
+}
+
+@media (max-width: 820px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.foot {
+  padding: 8px 20px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.status {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.status.ok {
+  color: var(--ok);
+}
+
+.status.bad {
+  color: var(--bad);
+}
